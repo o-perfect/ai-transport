@@ -1,6 +1,6 @@
 """Terminal chat with the agent.
 
-    python chat_cli.py                      # interactive, deepseek-chat
+    python chat_cli.py                      # interactive, qwen
     python chat_cli.py -m qwen --no-tools   # baseline: plain LLM, no tools
     python chat_cli.py -q "Suez is closed, what about Shanghai-Rotterdam?"
 """
@@ -24,7 +24,7 @@ def show(ev):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("-m", "--model", default="deepseek-chat", choices=MODELS)
+    p.add_argument("-m", "--model", default=MODELS[0], choices=MODELS)
     p.add_argument("--no-tools", action="store_true", help="baseline mode without tools")
     p.add_argument("-q", "--question", help="ask one question and exit")
     a = p.parse_args()

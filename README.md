@@ -90,8 +90,8 @@ python -m core.chokepoints open hormuz
   Malacca, Hormuz, Cape of Good Hope, Gibraltar, Sunda, Bering). Others (e.g. Taiwan,
   Dover) can't be blocked by the agent and come back as `unrecognised_blocked`.
   Alternatives are found by re-routing with each passage the route uses blocked.
-- LLM API: `https://models.sjtu.edu.cn/api/v1`, models `deepseek-chat`, `qwen`,
-  `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
+- LLM API: `https://models.sjtu.edu.cn/api/v1`, models `qwen` (default, fastest),
+  `deepseek-chat`, `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
 - PortWatch responses are cached for 6 h in `.cache/`.
 - Agent cost figures (fuel burn, charter rates, canal tolls, war-risk premium) are
   planning assumptions in `agent/tools.py::VESSELS`; cite them as such in the report.

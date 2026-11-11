@@ -12,7 +12,7 @@ from .tools import FUNCTIONS, SCHEMAS
 load_dotenv()
 
 BASE_URL = "https://models.sjtu.edu.cn/api/v1"
-MODELS = ["deepseek-chat", "qwen", "deepseek-reasoner"]
+MODELS = ["qwen", "deepseek-chat", "deepseek-reasoner"]  # first is the default; qwen writes ~2x faster
 MAX_STEPS = 8
 
 SYSTEM_PROMPT = """You are a maritime transport risk analyst agent. You help shipping, port and \
@@ -33,14 +33,17 @@ user closed on the map: treat them as blocked (pass them as blocked_chokepoints)
 says otherwise. If one is not in the routing network, say it could not be modelled.
 - Reply in the user's language.
 
-Final answer format (markdown):
-1. **Situation** - what is disrupted and current traffic evidence.
-2. **Affected links** - which trade lanes are hit and how badly.
+Final answer format (markdown), at most about 350 words in total. Be terse: short bullets, no \
+introduction or closing summary, and don't repeat numbers from the table in prose.
+1. **Situation** - 1-2 bullets: what is disrupted and the current traffic evidence.
+2. **Affected links** - 1-3 bullets: which trade lanes are hit and how badly.
 3. **Route options** - a table: route (via), distance nm, sea days, total cost USD, extra vs baseline.
-4. **Risk assessment** - a qualitative rating (Low/Medium/High/Critical) with reasons.
-5. **Recommendations** - concrete short-term and medium-term mitigation actions.
-6. **Assumptions & sources** - key parameters used and data sources (IMF PortWatch, searoute \
+4. **Risk assessment** - a rating (Low/Medium/High/Critical) and one sentence why.
+5. **Recommendations** - up to 3 short-term and 2 medium-term actions, one line each.
+6. **Assumptions & sources** - one line: key parameters and sources (IMF PortWatch, searoute \
 maritime network).
+For a simple question that is not a disruption scenario (e.g. only current traffic), skip the \
+template and answer in a few lines.
 """
 
 BASELINE_PROMPT = """You are a maritime transport risk analyst. Answer the user's question about \
@@ -98,7 +101,7 @@ def run_tool(name, args):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def run_agent(history, model="deepseek-chat", use_tools=True, on_event=None, client=None):
+def run_agent(history, model=MODELS[0], use_tools=True, on_event=None, client=None):
     """Run one user turn.
 
     history: list of {"role": "user"|"assistant", "content": str} (no system message).
