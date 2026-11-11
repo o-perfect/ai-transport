@@ -9,12 +9,14 @@ re-routing with each passage the route uses blocked in turn.
 All coordinates are [lon, lat], as searoute and GeoJSON expect.
 """
 
+import copy
 import difflib
 import math
 import warnings
 from functools import lru_cache
 
 import searoute as sr
+from searoute.searoute import setup_M
 
 from core.ports import load_ports
 
@@ -137,6 +139,35 @@ def port_coords(port):
     return PORTS.get(port) or _world_ports()[0][port]
 
 
+@lru_cache(maxsize=1)
+def _network():
+    """searoute's network with two fixes so blocked passages really are blocked:
+    - Edge data is stored per direction and searoute tags passages on one
+      direction only, so its two-way search could still cross a "blocked"
+      passage the other way. Tags are copied to both directions.
+    - Its "south_africa" passage is a few edges the graph can go around at 40S,
+      so every edge crossing 20E south of Cape Agulhas (34.8S) is tagged too:
+      any route around Africa has to cross there.
+    """
+    M = copy.deepcopy(setup_M())
+    tags = {}
+    for u, v in M.edges():
+        for a, b in ((u, v), (v, u)):
+            passage = (M.get_edge_data(a, b) or {}).get("passage")
+            if passage:
+                tags[frozenset((u, v))] = passage
+        (x1, y1), (x2, y2) = u, v
+        if min(x1, x2) <= 20 <= max(x1, x2) and abs(x1 - x2) < 180 and max(y1, y2) < -34:
+            tags[frozenset((u, v))] = "south_africa"
+    for pair, passage in tags.items():
+        u, v = tuple(pair)
+        for a, b in ((u, v), (v, u)):
+            data = M.get_edge_data(a, b)
+            if data is not None:
+                data["passage"] = passage
+    return M
+
+
 @lru_cache(maxsize=4096)
 def _searoute(origin, destination, restrictions):
     """(length_nm, coords, passages) or None if every path is restricted."""
@@ -144,7 +175,7 @@ def _searoute(origin, destination, restrictions):
         warnings.simplefilter("always")
         feat = sr.searoute(port_coords(origin), port_coords(destination), units="naut",
                            restrictions=list(restrictions), append_orig_dest=True,
-                           return_passages=True)
+                           return_passages=True, M=_network())
     length = feat.properties.get("length") or 0
     if not length or math.isinf(length) or any("No path" in str(w.message) for w in caught):
         return None
