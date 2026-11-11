@@ -8,6 +8,9 @@ venv/
 # Agent caches (PortWatch responses)
 .cache/
 
+# Runtime chokepoint changes (core/chokepoints.py); data/chokepoints.json is the reference
+data/chokepoints.state.json
+
 # Editors / OS
 .vscode/
 .idea/

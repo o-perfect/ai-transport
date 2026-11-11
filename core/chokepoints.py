@@ -1,28 +1,41 @@
 """Chokepoint registry: the single source of truth for which straits/canals
 are open or closed and how risky they are.
 
-State lives in data/chokepoints.json, so anything (the Streamlit UI, an AI
-agent, a script, a cron job) can flip a switch and the map picks it up.
+Two files:
+- data/chokepoints.json: reference data (positions, limits, tolls, default
+  status). Tracked in git and never written at runtime; edit it by hand.
+- data/chokepoints.state.json: what has been changed at runtime (flipped
+  switches, new risk values, custom chokepoints added or removed), stored
+  as a diff against the reference data. Git-ignored, so trying out a
+  scenario never shows up as a change to commit. Delete it, or run
+  `python -m core.chokepoints reset`, to go back to the reference data.
+
+Anything (an AI agent, a script, a cron job) can flip a switch through the
+registry, and every new registry picks it up.
 
 Agent / script usage:
     from core.chokepoints import ChokepointRegistry
     reg = ChokepointRegistry()
     reg.set_status("babalmandab", "closed", note="Attacks on shipping")
     reg.set_risk("hormuz", risk_score=0.9, war_risk_premium_pct=1.0)
+    reg.reset()  # back to the reference data
 
 Command line:
     python -m core.chokepoints list
     python -m core.chokepoints close babalmandab "Attacks on shipping"
     python -m core.chokepoints open babalmandab
+    python -m core.chokepoints reset
 """
 import json
+import pathlib
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 
 from . import DATA_DIR
 
 CHOKEPOINTS_FILE = DATA_DIR / "chokepoints.json"
+STATE_FILE = DATA_DIR / "chokepoints.state.json"
 STATUSES = ("open", "closed")
 
 
@@ -49,18 +62,63 @@ class Chokepoint:
 
 
 class ChokepointRegistry:
-    def __init__(self, path=CHOKEPOINTS_FILE):
-        self.path = path
+    def __init__(self, path=CHOKEPOINTS_FILE, state_path=STATE_FILE):
+        self.path = pathlib.Path(path)              # reference data, read only
+        self.state_path = pathlib.Path(state_path)  # runtime changes, written by save()
         self.reload()
 
     # ---- persistence -------------------------------------------------
-    def reload(self):
+    def _load_reference(self) -> dict:
         with open(self.path, encoding="utf-8") as f:
-            self._items = {c["id"]: Chokepoint(**c) for c in json.load(f)}
+            return {c["id"]: c for c in json.load(f)}
+
+    def reload(self):
+        items = self._load_reference()
+        try:
+            with open(self.state_path, encoding="utf-8") as f:
+                state = json.load(f)
+        except FileNotFoundError:
+            state = {}
+        known = {f.name for f in fields(Chokepoint)}
+        for cp_id, changes in state.get("changed", {}).items():
+            if cp_id in items:  # skip changes to chokepoints since dropped from the reference
+                items[cp_id] = {**items[cp_id], **{k: v for k, v in changes.items() if k in known}}
+        for cp_id in state.get("removed", []):
+            items.pop(cp_id, None)
+        for c in state.get("added", []):
+            items[c["id"]] = {k: v for k, v in c.items() if k in known}
+        self._items = {cp_id: Chokepoint(**c) for cp_id, c in items.items()}
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump([asdict(c) for c in self._items.values()], f, indent=2)
+        """Write the difference from the reference data to the state file."""
+        reference = self._load_reference()
+        changed, added = {}, []
+        for cp_id, cp in self._items.items():
+            current = asdict(cp)
+            if cp_id not in reference:
+                added.append(current)
+                continue
+            ref = asdict(Chokepoint(**reference[cp_id]))  # fills defaults for missing keys
+            diff = {k: v for k, v in current.items() if v != ref[k]}
+            if diff:
+                changed[cp_id] = diff
+        removed = [cp_id for cp_id in reference if cp_id not in self._items]
+        if not (changed or added or removed):
+            self.state_path.unlink(missing_ok=True)
+            return
+        with open(self.state_path, "w", encoding="utf-8") as f:
+            json.dump({"changed": changed, "added": added, "removed": removed}, f, indent=2)
+
+    def reset(self):
+        """Drop all runtime changes and go back to the reference data."""
+        self.state_path.unlink(missing_ok=True)
+        self.reload()
+
+    def changed_ids(self) -> set[str]:
+        """Ids that differ from the reference data (changed or added)."""
+        reference = self._load_reference()
+        return {cp_id for cp_id, cp in self._items.items()
+                if cp_id not in reference or asdict(cp) != asdict(Chokepoint(**reference[cp_id]))}
 
     # ---- queries ------------------------------------------------------
     def all(self) -> list[Chokepoint]:
@@ -111,12 +169,20 @@ class ChokepointRegistry:
 def _cli(argv):
     reg = ChokepointRegistry()
     if not argv or argv[0] == "list":
+        changed = reg.changed_ids()
         for c in reg.all():
-            print(f"{c.id:14} {c.status:7} risk={c.risk_score:.2f}  {c.name}")
+            mark = "*" if c.id in changed else " "
+            print(f"{mark} {c.id:14} {c.status:7} risk={c.risk_score:.2f}  {c.name}")
+        if changed:
+            print(f"\n* changed at runtime (saved in {reg.state_path.name}; "
+                  "`python -m core.chokepoints reset` to undo)")
     elif argv[0] in ("open", "close") and len(argv) >= 2:
         reg.set_status(argv[1], "open" if argv[0] == "open" else "closed",
                        note=argv[2] if len(argv) > 2 else None)
         print(f"{argv[1]} -> {reg.get(argv[1]).status}")
+    elif argv[0] == "reset":
+        reg.reset()
+        print("All chokepoints back to the reference data.")
     else:
         print(__doc__)
 

@@ -42,7 +42,10 @@ core/ships.py          Ship types + attributes; ShipType.to_features() for ML
 core/chokepoints.py    Chokepoint registry: open/close, risk, add custom ones
 core/routing.py        Sea routing (searoute network) avoiding closed chokepoints
 core/costs.py          Fuel, time, tolls, war-risk insurance, risk score
-data/chokepoints.json  Chokepoint state (the "switches")
+data/chokepoints.json  Chokepoint reference data (tracked; never written at runtime)
+data/chokepoints.state.json
+                       Runtime changes on top of it: open/close switches, risk, custom
+                       chokepoints (git-ignored; `python -m core.chokepoints reset` clears it)
 data/ships.json        Ship type definitions
                        (core/ is the earlier route planner's logic; the UI no longer uses it
                        apart from core/ports.py, but it is kept as a library)
