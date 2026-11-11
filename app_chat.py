@@ -7,6 +7,7 @@ scenario, and compare_routes geometry goes out to the map (see shared_state.py).
 
 import datetime as dt
 import json
+import time
 
 import pandas as pd
 import streamlit as st
@@ -63,7 +64,7 @@ def render_charts(tools):
             st.bar_chart(df.set_index("route")[["fuel_usd", "charter_time_usd", "canal_tolls_usd",
                                                 "war_risk_insurance_usd"]], horizontal=True)
         elif e["name"] == "find_affected_routes" and r.get("affected"):
-            df = pd.DataFrame(r["affected"])
+            df = pd.DataFrame(r.get("_all_affected", r["affected"]))
             st.markdown(f"**Links through {r['chokepoint']}**: {r['links_affected']} of {r['links_total']}")
             st.dataframe(df, hide_index=True)
 
@@ -150,23 +151,36 @@ def chat_page():
 
     with st.chat_message("assistant"):
         status = st.status("Thinking…", expanded=True)
+        answer_box = st.empty()
+        streamed = {"text": "", "shown": 0.0}
 
         def on_event(e):
-            if e["type"] == "tool":
-                status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
-            elif e["type"] == "thought":
+            if e["type"] == "delta":
+                if not streamed["text"]:
+                    status.update(label="Writing…")
+                streamed["text"] += e["text"]
+                if time.time() - streamed["shown"] > 0.1:  # redraw at most 10x per second
+                    answer_box.markdown(streamed["text"] + " ▌")
+                    streamed["shown"] = time.time()
+            elif e["type"] == "thought":  # the streamed text was a note before tool calls
+                streamed["text"] = ""
+                answer_box.empty()
                 status.write(f"💭 {e['text'][:300]}")
+                status.update(label="Thinking…")
+            elif e["type"] == "tool":
+                status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
 
         history = [{"role": m["role"], "content": with_scenario(m)} for m in ss.messages]
         try:
             out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
         except Exception as e:
             status.update(label="Failed", state="error")
+            answer_box.empty()
             st.error(f"{type(e).__name__}: {e}")
             ss.messages.pop()
             return
         status.update(label=f"Done · {out['usage']['llm_calls']} LLM calls", state="complete", expanded=False)
-        st.markdown(out["answer"])
+        answer_box.markdown(out["answer"])
         render_trace(out["trace"])
         geometry = latest_geometry(out["trace"])
         if geometry:

@@ -153,10 +153,12 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
                    war_risk_premium_pct=0.7):
     """Baseline route vs. best alternatives when chokepoints are blocked, with
     distance, sea time, voyage cost (fuel, charter, tolls, war-risk cover) and CO2."""
-    o, d = net.resolve(origin), net.resolve(destination)
-    bad = [x for x, r in ((origin, o), (destination, d)) if r not in net.PORTS]
+    o, d = net.resolve_port(origin), net.resolve_port(destination)
+    bad = [x for x, r in ((origin, o), (destination, d)) if r is None]
     if bad:
-        return {"error": f"Unknown port(s) {bad}. Supported ports: {list(net.PORTS)}"}
+        return {"error": f"Unknown port(s) {bad}. Closest matches: "
+                         f"{ {x: net.suggest_ports(x) for x in bad} }. Use a port name, "
+                         "'Name, Country' or a UN/LOCODE."}
     if vessel_type not in VESSELS:
         return {"error": f"Unknown vessel_type. Options: {list(VESSELS)}"}
     vessel = VESSELS[vessel_type]
@@ -198,6 +200,9 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
     }
 
 
+AFFECTED_SHOWN = 15  # the full list is long and slows the LLM down; the UI gets all of it
+
+
 def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=14.0):
     """Which port-to-port links in the network depend on a chokepoint, and how
     much distance/time each loses if it is closed. Sorted by extra sea days."""
@@ -226,12 +231,18 @@ def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=
             rows.append(row)
     rows.sort(key=lambda r: -r.get("extra_days", 1e9))
     return {"chokepoint": c, "speed_knots": speed_knots, "links_affected": len(rows),
-            "links_total": len(ports) * (len(ports) - 1) // 2, "affected": rows}
+            "links_total": len(ports) * (len(ports) - 1) // 2,
+            "links_cut": sum("detour" in r for r in rows),
+            "affected": rows[:AFFECTED_SHOWN],
+            "note": f"Worst {AFFECTED_SHOWN} links shown" if len(rows) > AFFECTED_SHOWN else "All links shown",
+            "_all_affected": rows}
 
 
 # --- OpenAI-style tool schemas ----------------------------------------------
 
-_ports_enum = list(net.PORTS)
+_port_param = {"type": "string",
+               "description": "Any world port: a name (e.g. 'Sydney'), 'Name, Country' to disambiguate, "
+                              "or a UN/LOCODE (e.g. 'AUSYD'). Main hubs: " + ", ".join(net.PORTS)}
 _choke_enum = list(net.CHOKEPOINTS)
 
 SCHEMAS = [
@@ -252,8 +263,8 @@ SCHEMAS = [
                        "Use war_risk_chokepoints to price passing a dangerous-but-open chokepoint instead of "
                        "blocking it.",
         "parameters": {"type": "object", "properties": {
-            "origin": {"type": "string", "enum": _ports_enum},
-            "destination": {"type": "string", "enum": _ports_enum},
+            "origin": _port_param,
+            "destination": _port_param,
             "blocked_chokepoints": {"type": "array", "items": {"type": "string", "enum": _choke_enum},
                                     "description": "Chokepoints that are closed"},
             "vessel_type": {"type": "string", "enum": list(VESSELS), "default": "container_large"},
@@ -266,8 +277,9 @@ SCHEMAS = [
         }, "required": ["origin", "destination"]}}},
     {"type": "function", "function": {
         "name": "find_affected_routes",
-        "description": "Network impact analysis: list every port-to-port link in the model whose normal route "
-                       "uses the given chokepoint, with the detour distance and extra days if it closes.",
+        "description": "Network impact analysis over the model's main hub ports: the port-to-port links whose "
+                       "normal route uses the given chokepoint, with the detour distance and extra days if it "
+                       "closes (worst links first).",
         "parameters": {"type": "object", "properties": {
             "chokepoint": {"type": "string", "enum": _choke_enum},
             "vessel_type": {"type": "string", "enum": list(VESSELS), "default": "container_large"},

@@ -1,6 +1,7 @@
 """Sea routing for the agent, on the searoute maritime network.
 
-Ports are a fixed table of coordinates; chokepoints are the IMF PortWatch
+Ports are a table of main hubs plus the ~3,900 world ports bundled with
+searoute (core/ports.py); chokepoints are the IMF PortWatch
 chokepoints that have a matching searoute passage, so closing one means
 passing that passage to searoute as a restriction. Alternatives come from
 re-routing with each passage the route uses blocked in turn.
@@ -8,13 +9,17 @@ re-routing with each passage the route uses blocked in turn.
 All coordinates are [lon, lat], as searoute and GeoJSON expect.
 """
 
+import difflib
 import math
 import warnings
 from functools import lru_cache
 
 import searoute as sr
 
-# name -> [lon, lat]
+from core.ports import load_ports
+
+# Main hub ports, name -> [lon, lat]. find_affected_routes checks every pair of
+# these; compare_routes also takes any port from the world list (resolve_port).
 PORTS = {
     "Shanghai": [121.8, 31.2],
     "Shenzhen": [114.1, 22.5],
@@ -90,12 +95,54 @@ def resolve(name):
     return None
 
 
+@lru_cache(maxsize=1)
+def _world_ports():
+    """label "Name, Country (LOCODE)" -> [lon, lat], plus lookup tables."""
+    df = load_ports()
+    coords = {r.label: [r.lon, r.lat] for r in df.itertuples()}
+    by_locode = {r.locode.lower(): r.label for r in df.itertuples() if r.locode}
+    by_name = {}
+    for r in df.itertuples():  # sorted by name, country: first one wins
+        by_name.setdefault(r.name.lower(), r.label)
+    return coords, by_locode, by_name
+
+
+def resolve_port(name):
+    """A main hub name, or a world port label "Name, Country (LOCODE)".
+    Accepts a port name, "Name, Country", a label, or a UN/LOCODE."""
+    r = resolve(name)
+    if r in PORTS:
+        return r
+    coords, by_locode, by_name = _world_ports()
+    low = name.strip().lower()
+    if low.replace(" ", "") in by_locode:
+        return by_locode[low.replace(" ", "")]
+    if low in by_name:
+        return by_name[low]
+    for label in coords:  # "Sydney, Australia" or a full label
+        if label.lower().startswith(low):
+            return label
+    return None
+
+
+def suggest_ports(name, n=5):
+    """Close matches for an unknown port name, as world port labels."""
+    _, _, by_name = _world_ports()
+    names = list(PORTS) + list(by_name)
+    hits = difflib.get_close_matches(name.strip().lower(), [x.lower() for x in names], n=n)
+    return [resolve_port(h) for h in hits]
+
+
+def port_coords(port):
+    return PORTS.get(port) or _world_ports()[0][port]
+
+
 @lru_cache(maxsize=4096)
 def _searoute(origin, destination, restrictions):
     """(length_nm, coords, passages) or None if every path is restricted."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        feat = sr.searoute(PORTS[origin], PORTS[destination], units="naut",
+        feat = sr.searoute(port_coords(origin), port_coords(destination), units="naut",
                            restrictions=list(restrictions), append_orig_dest=True,
                            return_passages=True)
     length = feat.properties.get("length") or 0

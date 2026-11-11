@@ -12,12 +12,14 @@ from agent.core import MODELS, run_agent
 
 
 def show(ev):
-    if ev["type"] == "tool":
+    if ev["type"] == "delta":
+        print(ev["text"], end="", flush=True)
+    elif ev["type"] == "tool":
         args = json.dumps(ev["args"], ensure_ascii=False)
         status = "ERROR " + ev["result"]["error"] if "error" in ev["result"] else "ok"
         print(f"  [tool] {ev['name']}({args}) -> {status} ({ev['seconds']}s)")
     elif ev["type"] == "thought":
-        print(f"  [thinking] {ev['text'][:200]}")
+        print()  # the thought was already streamed above
 
 
 def main():
@@ -33,10 +35,10 @@ def main():
         if not q or q in ("exit", "quit"):
             break
         history.append({"role": "user", "content": q})
+        print("\nagent> ", end="")
         out = run_agent(history, model=a.model, use_tools=not a.no_tools, on_event=show)
         history.append({"role": "assistant", "content": out["answer"]})
-        print("\nagent>\n" + out["answer"])
-        print(f"\n  [usage] {out['usage']}")
+        print(f"\n\n  [usage] {out['usage']}")
         if a.question:
             break
 

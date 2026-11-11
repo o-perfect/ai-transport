@@ -25,7 +25,9 @@ or estimate such figures yourself. If a tool cannot answer, say so.
 - Plan first: work out which tools you need, call them (several in one step if independent), then reason.
 - For a closure scenario, typically: check live traffic at the chokepoint, find the affected links, \
 compare routes for the specific trade lane(s) the user cares about.
-- If the user's port or chokepoint is not supported, pick the nearest supported one and say so.
+- compare_routes takes any world port. If a port name is ambiguous or unknown, use the closest match \
+the tool suggests (or 'Name, Country' / UN/LOCODE) and say which port you used. If a chokepoint is not \
+supported, say so.
 - A message may start with "[Map scenario: closed chokepoints: ...]". Those are the chokepoints the \
 user closed on the map: treat them as blocked (pass them as blocked_chokepoints) unless the question \
 says otherwise. If one is not in the routing network, say it could not be modelled.
@@ -58,6 +60,32 @@ def _strip_private(result):
     return result
 
 
+def _stream_completion(client, kwargs, emit):
+    """Streamed chat completion. Emits {"type": "delta", "text"} for each piece of
+    content so UIs can show the answer as it is written.
+    Returns (content, tool_calls as [{"id", "name", "arguments"}], usage or None)."""
+    stream = client.chat.completions.create(**kwargs, stream=True,
+                                            stream_options={"include_usage": True})
+    content, calls, usage = [], {}, None
+    for chunk in stream:
+        if chunk.usage:
+            usage = chunk.usage
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta.content:
+            content.append(delta.content)
+            emit({"type": "delta", "text": delta.content})
+        for tc in delta.tool_calls or []:
+            c = calls.setdefault(tc.index, {"id": None, "name": "", "arguments": ""})
+            c["id"] = tc.id or c["id"]
+            if tc.function and tc.function.name:
+                c["name"] += tc.function.name
+            if tc.function and tc.function.arguments:
+                c["arguments"] += tc.function.arguments
+    return "".join(content), [calls[i] for i in sorted(calls)], usage
+
+
 def run_tool(name, args):
     fn = FUNCTIONS.get(name)
     if fn is None:
@@ -74,7 +102,9 @@ def run_agent(history, model="deepseek-chat", use_tools=True, on_event=None, cli
     """Run one user turn.
 
     history: list of {"role": "user"|"assistant", "content": str} (no system message).
-    on_event: optional callback(event_dict) for live UI updates.
+    on_event: optional callback(event_dict) for live UI updates. "delta" events
+        stream content as it is generated; if the step then calls tools, a
+        "thought" event follows with the same text, so drop the streamed text.
     Returns {"answer": str, "trace": [event, ...], "usage": {...}}.
     """
     client = client or make_client()
@@ -88,41 +118,40 @@ def run_agent(history, model="deepseek-chat", use_tools=True, on_event=None, cli
         if use_tools:
             kwargs["tools"] = SCHEMAS
         t0 = time.time()
-        resp = client.chat.completions.create(**kwargs)
+        content, tool_calls, u = _stream_completion(client, kwargs, emit)
         usage["llm_calls"] += 1
-        if resp.usage:
-            usage["prompt_tokens"] += resp.usage.prompt_tokens
-            usage["completion_tokens"] += resp.usage.completion_tokens
-        msg = resp.choices[0].message
+        if u:
+            usage["prompt_tokens"] += u.prompt_tokens
+            usage["completion_tokens"] += u.completion_tokens
 
-        if not msg.tool_calls:
+        if not tool_calls:
             ev = {"type": "answer", "step": step, "seconds": round(time.time() - t0, 1)}
             trace.append(ev)
             emit(ev)
-            return {"answer": msg.content or "", "trace": trace, "usage": usage}
+            return {"answer": content, "trace": trace, "usage": usage}
 
-        if msg.content:
-            ev = {"type": "thought", "step": step, "text": msg.content}
+        if content:
+            ev = {"type": "thought", "step": step, "text": content}
             trace.append(ev)
             emit(ev)
         messages.append({
-            "role": "assistant", "content": msg.content or "",
-            "tool_calls": [{"id": tc.id, "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                           for tc in msg.tool_calls],
+            "role": "assistant", "content": content,
+            "tool_calls": [{"id": tc["id"], "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+                           for tc in tool_calls],
         })
-        for tc in msg.tool_calls:
+        for tc in tool_calls:
             try:
-                args = json.loads(tc.function.arguments or "{}")
+                args = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
             t1 = time.time()
-            result = run_tool(tc.function.name, args)
-            ev = {"type": "tool", "step": step, "name": tc.function.name, "args": args,
+            result = run_tool(tc["name"], args)
+            ev = {"type": "tool", "step": step, "name": tc["name"], "args": args,
                   "result": result, "seconds": round(time.time() - t1, 2)}
             trace.append(ev)
             emit(ev)
-            messages.append({"role": "tool", "tool_call_id": tc.id,
+            messages.append({"role": "tool", "tool_call_id": tc["id"],
                              "content": json.dumps(_strip_private(result), ensure_ascii=False)})
 
     return {"answer": "Stopped: reached the maximum number of tool steps.", "trace": trace, "usage": usage}
