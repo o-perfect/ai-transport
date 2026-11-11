@@ -28,9 +28,8 @@ compare routes for the specific trade lane(s) the user cares about.
 - compare_routes takes any world port. If a port name is ambiguous or unknown, use the closest match \
 the tool suggests (or 'Name, Country' / UN/LOCODE) and say which port you used. If a chokepoint is not \
 supported, say so.
-- A message may start with "[Map scenario: closed chokepoints: ...]". Those are the chokepoints the \
-user closed on the map: treat them as blocked (pass them as blocked_chokepoints) unless the question \
-says otherwise. If one is not in the routing network, say it could not be modelled.
+- For a route question, call compare_routes even if a chokepoint closure is only implied (e.g. \
+"the Red Sea is too dangerous"): its routes are drawn on the user's map.
 - Reply in the user's language.
 
 Final answer format (markdown), at most about 350 words in total. Be terse: short bullets, no \

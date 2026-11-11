@@ -141,10 +141,11 @@ def _route_cost(r, vessel, speed_knots, fuel_price, war_risk, war_risk_pct):
     }
 
 
-def _feature(r, role, label):
+def _feature(r, costs, role, label):
     return {"type": "Feature", "geometry": r["geometry"],
             "properties": {"role": role, "label": label, "origin": r["path"][0],
-                           "destination": r["path"][-1], "distance_nm": round(r["distance_nm"]),
+                           "destination": r["path"][-1], "distance_nm": costs["distance_nm"],
+                           "sea_days": costs["sea_days"], "total_cost_usd": costs["cost_usd"]["total"],
                            "chokepoints": r["chokepoints"]}}
 
 
@@ -194,9 +195,10 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
         "baseline_route": baseline,
         "alternatives": alts if alts else "No feasible route with these blockages",
         "_geometry": {"type": "FeatureCollection", "features": [
-            _feature(base, "baseline", "Baseline: " + (" / ".join(base["chokepoints"]) or "open sea")),
-            *(_feature(r, "alternative", f"Alt {i}: " + (" / ".join(r["chokepoints"]) or "open sea"))
-              for i, r in enumerate(alt_routes, 1))]},
+            _feature(base, baseline, "baseline", "Baseline: " + (" / ".join(base["chokepoints"]) or "open sea")),
+            *(_feature(r, a, "alternative", f"Alt {i}: " + (" / ".join(r["chokepoints"]) or "open sea"))
+              for i, (r, a) in enumerate(zip(alt_routes, alts), 1))],
+            "scenario": {"blocked": blocked, "war_risk": war_risk, "vessel_cannot_use": restricted}},
     }
 
 

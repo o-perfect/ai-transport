@@ -3,17 +3,16 @@
 Intelligent agent for risk assessment and safeguard decision-making for international
 transport corridors facing geopolitical shocks (TE8315, Topic 5).
 
-One Streamlit page (`app.py`) with the map on the left and the agent chat on the right:
+One Streamlit page (`app.py`), natural-language input only:
 
-- **Route planner**: plan a sea route between any two ports, close chokepoints (Suez,
-  Bab-el-Mandeb, Hormuz, …) and compare the detour's distance, time, cost and risk.
-- **Corridor risk agent** (`app_chat.py`, also `chat_cli.py`): an LLM agent that uses tools
-  (live IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write
-  a risk assessment and contingency plan.
+- **Chat** (right, `app_chat.py`; also `chat_cli.py`): an LLM agent that uses tools (live
+  IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write a risk
+  assessment and contingency plan. Describe the disruption in words, e.g. "Suez is
+  closed, options from Shanghai to Rotterdam?".
+- **Map** (left): the routes from the agent's latest `compare_routes` call, with the
+  chokepoints it treated as closed or high-risk, and a table of distance, days and cost.
 
-Map and chat talk through `st.session_state` (keys in `shared_state.py`): chokepoints
-closed on the map are added to the chat prompt as the scenario, and the routes from the
-agent's last `compare_routes` call are drawn on the map.
+The chat hands the routes to the map through `st.session_state` (keys in `shared_state.py`).
 
 ## Setup
 
@@ -26,7 +25,7 @@ echo "SJTU_API_KEY=sk-..." > .env             # never commit this
 ## Run
 
 ```bash
-.venv/bin/streamlit run app.py                      # route planner + agent chat
+.venv/bin/streamlit run app.py                      # map + agent chat
 .venv/bin/streamlit run app_chat.py                 # chat UI only (no map)
 .venv/bin/python chat_cli.py                        # terminal chat
 .venv/bin/python chat_cli.py --no-tools -m qwen     # baseline: plain LLM, no tools
@@ -35,9 +34,9 @@ echo "SJTU_API_KEY=sk-..." > .env             # never commit this
 ## Project layout
 
 ```
-app.py                 Streamlit page: planner + map (left), agent chat (right)
+app.py                 Streamlit page: map of the agent's routes (left), chat (right)
 app_chat.py            Agent chat panel: tool-call trace, charts, export (chat_panel())
-shared_state.py        Session-state keys shared by the two pages
+shared_state.py        Session-state keys shared by map and chat
 core/ports.py          ~3,900 world ports (bundled with the searoute package)
 core/ships.py          Ship types + attributes; ShipType.to_features() for ML
 core/chokepoints.py    Chokepoint registry: open/close, risk, add custom ones
@@ -45,32 +44,13 @@ core/routing.py        Sea routing (searoute network) avoiding closed chokepoint
 core/costs.py          Fuel, time, tolls, war-risk insurance, risk score
 data/chokepoints.json  Chokepoint state (the "switches")
 data/ships.json        Ship type definitions
+                       (core/ is the earlier route planner's logic; the UI no longer uses it
+                       apart from core/ports.py, but it is kept as a library)
 
 agent/core.py          Agent loop, system prompt, task understanding, report format
 agent/tools.py         Tools: live PortWatch traffic, route + cost comparison, affected links
 agent/network.py       Agent routing on searoute: port table, PortWatch -> passage map
 chat_cli.py            Terminal chat for quick testing
-```
-
-## For the AI agent: flipping a chokepoint switch
-
-Chokepoint state is stored in `data/chokepoints.json`. Change it, and the map
-updates on the next refresh.
-
-```python
-from core.chokepoints import ChokepointRegistry
-reg = ChokepointRegistry()
-reg.set_status("babalmandab", "closed", note="Attacks on shipping")
-reg.set_risk("hormuz", risk_score=0.9, war_risk_premium_pct=1.0)
-reg.add("Danish Straits", lat=55.6, lon=10.9, radius_km=80, risk_score=0.1)
-```
-
-Or from the command line:
-
-```bash
-python -m core.chokepoints list
-python -m core.chokepoints close hormuz "Tanker seizures"
-python -m core.chokepoints open hormuz
 ```
 
 ## Notes / assumptions

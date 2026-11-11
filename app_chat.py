@@ -1,8 +1,8 @@
 """Streamlit chat for the agent. app.py shows it beside the map (chat_panel());
 it also runs on its own without the map: streamlit run app_chat.py
 
-Chokepoints closed on the map come in as the scenario, and compare_routes
-geometry goes out to the map (see shared_state.py).
+The routes from the agent's latest compare_routes call go to the map through
+st.session_state (see shared_state.py).
 """
 
 import datetime as dt
@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from agent.core import MODELS, run_agent
-from shared_state import AGENT_BUSY, AGENT_ROUTES, SCENARIO
+from shared_state import AGENT_BUSY, AGENT_ROUTES
 
 EXAMPLES = [
     "The Suez Canal is blocked. We ship containers Shanghai to Rotterdam on a 14,000 TEU ship. Options and cost?",
@@ -69,13 +69,6 @@ def render_charts(tools):
             st.dataframe(df, hide_index=True)
 
 
-def with_scenario(m):
-    """Message content as sent to the agent: the map scenario goes in front of the question."""
-    if m["role"] != "user" or not m.get("scenario"):
-        return m["content"]
-    return f"[Map scenario: closed chokepoints: {', '.join(m['scenario'])}]\n\n{m['content']}"
-
-
 def latest_geometry(trace):
     """GeoJSON of the last compare_routes call in an agent turn, if any."""
     for e in reversed(trace):
@@ -88,7 +81,7 @@ def report_markdown(messages):
     lines = [f"# Corridor risk report\n\n_Generated {dt.datetime.now():%Y-%m-%d %H:%M}_\n"]
     for m in messages:
         if m["role"] == "user":
-            lines.append(f"## Question\n\n{with_scenario(m)}\n")
+            lines.append(f"## Question\n\n{m['content']}\n")
         else:
             lines.append(f"## Answer\n\n{m['content']}\n")
             tools = [e for e in m.get("trace", []) if e["type"] == "tool"]
@@ -101,8 +94,6 @@ def report_markdown(messages):
 
 def render_message(m):
     with st.chat_message(m["role"]):
-        if m.get("scenario"):
-            st.caption("🗺️ Map scenario: " + ", ".join(m["scenario"]) + " closed")
         st.markdown(m["content"])
         if m["role"] == "assistant":
             render_trace(m.get("trace", []))
@@ -114,8 +105,8 @@ def render_message(m):
 
 
 def _start_turn(example=None):
-    """Submit callback: runs before the page redraws, so the map can freeze its
-    controls for the whole turn (see AGENT_BUSY)."""
+    """Submit callback: runs before the page redraws, so controls can be
+    disabled for the whole turn (see AGENT_BUSY)."""
     st.session_state[AGENT_BUSY] = True
     if example:
         st.session_state.pending = example
@@ -161,15 +152,6 @@ def chat_panel(height=640):
         if "agent_error" in ss:  # from a failed turn, kept across the rerun that unfreezes the page
             st.error(ss.pop("agent_error"))
 
-    scenario = ss.get(SCENARIO, [])
-    if scenario:
-        use_scenario = st.toggle("Map scenario: " + ", ".join(scenario) + " closed", value=True,
-                                 key="agent_scenario", disabled=busy,
-                                 help="Add the chokepoints closed on the map to the question")
-    else:
-        use_scenario = False
-        st.caption("No chokepoints closed on the map.")
-
     prompt = st.chat_input("Describe a disruption or ask a question…", submit_mode="disable",
                            on_submit=_start_turn) or ss.pop("pending", None)
     if not prompt:
@@ -178,8 +160,7 @@ def chat_panel(height=640):
             st.rerun()
         return None
     intro.empty()
-    ss.messages.append({"role": "user", "content": prompt,
-                        "scenario": list(scenario) if use_scenario else []})
+    ss.messages.append({"role": "user", "content": prompt})
     return lambda: _run_turn(box, model, use_tools)
 
 
@@ -208,7 +189,7 @@ def _run_turn(box, model, use_tools):
                 elif e["type"] == "tool":
                     status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
 
-            history = [{"role": m["role"], "content": with_scenario(m)} for m in ss.messages]
+            history = [{"role": m["role"], "content": m["content"]} for m in ss.messages]
             try:
                 out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
             except Exception as e:
