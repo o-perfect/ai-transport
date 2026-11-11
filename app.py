@@ -38,11 +38,14 @@ def chokepoint_status(name, scenario):
     return "Not assessed in this scenario", NEUTRAL_GREY
 
 
+WORLD_SHIFTS = (-360, 0, 360)  # draw on every world copy so panning across the dateline is seamless
+
+
 def route_map(routes) -> folium.Map:
     features = routes.get("features", [])
     scenario = routes.get("scenario", {})
     m = folium.Map(location=[20, 30], zoom_start=2, tiles=None,
-                   world_copy_jump=True, control_scale=True)
+                   world_copy_jump=True, control_scale=True, prefer_canvas=True)
     folium.TileLayer(  # free, no API key; light grey keeps the routes readable
         "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
         attr="Tiles &copy; Esri", name="Light grey", max_zoom=16).add_to(m)
@@ -55,15 +58,17 @@ def route_map(routes) -> folium.Map:
         props = feat["properties"]
         latlon = [(lat, lon) for lon, lat in feat["geometry"]["coordinates"]]
         view += latlon
-        folium.PolyLine(latlon, color=ROUTE_COLORS[i % len(ROUTE_COLORS)],
-                        weight=5 if props["role"] == "baseline" else 4, opacity=0.85,
-                        dash_array="8 8" if props["role"] == "baseline" else None,
-                        tooltip=f"{props['label']} · {props['distance_nm']:,} nm · "
-                                f"{props['sea_days']} days · {money(props['total_cost_usd'])}").add_to(m)
+        for shift in WORLD_SHIFTS:
+            folium.PolyLine([(lat, lon + shift) for lat, lon in latlon],
+                            color=ROUTE_COLORS[i % len(ROUTE_COLORS)],
+                            weight=5 if props["role"] == "baseline" else 4, opacity=0.85,
+                            dash_array="8 8" if props["role"] == "baseline" else None,
+                            tooltip=f"{props['label']} · {props['distance_nm']:,} nm · "
+                                    f"{props['sea_days']} days · {money(props['total_cost_usd'])}").add_to(m)
 
     for name, (_, (lon, lat)) in CHOKEPOINTS.items():
         status, color = chokepoint_status(name, scenario)
-        for shift in (-360, 0, 360):  # draw on every world copy
+        for shift in WORLD_SHIFTS:
             folium.CircleMarker([lat, lon + shift], radius=7, color=color, fill=True,
                                 fill_opacity=0.85, weight=2,
                                 tooltip=f"<b>{name}</b><br>{status}").add_to(m)
@@ -71,10 +76,11 @@ def route_map(routes) -> folium.Map:
     if features:
         base = features[0]
         start, end = base["geometry"]["coordinates"][0], base["geometry"]["coordinates"][-1]
-        folium.Marker([start[1], start[0]], tooltip=f"From: {base['properties']['origin']}",
-                      icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(m)
-        folium.Marker([end[1], end[0]], tooltip=f"To: {base['properties']['destination']}",
-                      icon=folium.Icon(color="red", icon="flag", prefix="fa")).add_to(m)
+        for shift in WORLD_SHIFTS:
+            folium.Marker([start[1], start[0] + shift], tooltip=f"From: {base['properties']['origin']}",
+                          icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(m)
+            folium.Marker([end[1], end[0] + shift], tooltip=f"To: {base['properties']['destination']}",
+                          icon=folium.Icon(color="red", icon="flag", prefix="fa")).add_to(m)
         m.fit_bounds([[min(c[0] for c in view), min(c[1] for c in view)],
                       [max(c[0] for c in view), max(c[1] for c in view)]], padding=(30, 30))
     return m
