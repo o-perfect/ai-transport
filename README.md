@@ -3,18 +3,17 @@
 Intelligent agent for risk assessment and safeguard decision-making for international
 transport corridors facing geopolitical shocks (TE8315, Topic 5).
 
-One Streamlit app (`app.py`) with two pages:
+One Streamlit page (`app.py`) with the map on the left and the agent chat on the right:
 
-- **Route planner** (`app_planner.py`): plan a sea route between any two ports, close
-  chokepoints (Suez, Bab-el-Mandeb, Hormuz, …) and compare the detour's distance, time,
-  cost and risk on a map.
+- **Route planner**: plan a sea route between any two ports, close chokepoints (Suez,
+  Bab-el-Mandeb, Hormuz, …) and compare the detour's distance, time, cost and risk.
 - **Corridor risk agent** (`app_chat.py`, also `chat_cli.py`): an LLM agent that uses tools
   (live IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write
   a risk assessment and contingency plan.
 
-The pages talk through `st.session_state` (keys in `shared_state.py`): chokepoints closed
-on the map are added to the chat prompt as the scenario, and the routes from the agent's
-last `compare_routes` call are drawn on the map.
+Map and chat talk through `st.session_state` (keys in `shared_state.py`): chokepoints
+closed on the map are added to the chat prompt as the scenario, and the routes from the
+agent's last `compare_routes` call are drawn on the map.
 
 ## Setup
 
@@ -36,9 +35,8 @@ echo "SJTU_API_KEY=sk-..." > .env             # never commit this
 ## Project layout
 
 ```
-app.py                 Streamlit entry: page navigation, map scenario -> session state
-app_planner.py         Route planner page + map (UI only); draws agent routes
-app_chat.py            Agent chat page: tool-call trace, charts, export (chat_page())
+app.py                 Streamlit page: planner + map (left), agent chat (right)
+app_chat.py            Agent chat panel: tool-call trace, charts, export (chat_panel())
 shared_state.py        Session-state keys shared by the two pages
 core/ports.py          ~3,900 world ports (bundled with the searoute package)
 core/ships.py          Ship types + attributes; ShipType.to_features() for ML

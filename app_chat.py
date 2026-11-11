@@ -1,8 +1,8 @@
-"""Streamlit chat page for the agent. Runs as a page of app.py (streamlit run app.py),
-or on its own without the map: streamlit run app_chat.py
+"""Streamlit chat for the agent. app.py shows it beside the map (chat_panel());
+it also runs on its own without the map: streamlit run app_chat.py
 
-Everything lives in chat_page(). Chokepoints closed on the map come in as the
-scenario, and compare_routes geometry goes out to the map (see shared_state.py).
+Chokepoints closed on the map come in as the scenario, and compare_routes
+geometry goes out to the map (see shared_state.py).
 """
 
 import datetime as dt
@@ -99,95 +99,122 @@ def report_markdown(messages):
     return "\n".join(lines)
 
 
-def chat_page():
-    st.title("🚢 Corridor Risk Agent")
+def render_message(m):
+    with st.chat_message(m["role"]):
+        if m.get("scenario"):
+            st.caption("🗺️ Map scenario: " + ", ".join(m["scenario"]) + " closed")
+        st.markdown(m["content"])
+        if m["role"] == "assistant":
+            render_trace(m.get("trace", []))
+            geometry = latest_geometry(m.get("trace", []))
+            if geometry is not None and geometry is st.session_state.get(AGENT_ROUTES):
+                st.caption(f"🗺️ {len(geometry['features'])} route(s) drawn on the map.")
+            if m.get("usage"):
+                st.caption(f"{m['model']} · tools {'on' if m['tools'] else 'off'} · {m['usage']}")
+
+
+def chat_panel(height=640):
+    """The chat inside the current container: settings, messages and input.
+
+    Returns a function that runs the submitted turn, or None. Call it after the
+    rest of the page is drawn so the page stays visible while the agent works;
+    it reruns the app when done so the map picks up the agent's routes."""
     ss = st.session_state
     ss.setdefault("messages", [])
 
-    with st.sidebar:
-        model = st.selectbox("Model", MODELS)
-        use_tools = st.toggle("Use tools (off = baseline LLM)", value=True)
-        scenario = ss.get(SCENARIO, [])
-        if scenario:
-            use_scenario = st.toggle("Include map scenario", value=True,
-                                     help="Chokepoints closed on the Route planner map")
-            st.caption("Closed on the map: " + ", ".join(scenario))
-        else:
-            use_scenario = False
-            st.caption("No chokepoints closed on the map.")
-        st.caption("Example scenarios")
-        for ex in EXAMPLES:
-            if st.button(ex, use_container_width=True):
-                ss.pending = ex
-        if ss.messages:
-            st.download_button("Export report (.md)", report_markdown(ss.messages),
-                               file_name="corridor_report.md", use_container_width=True)
-            st.download_button("Export trace (.json)",
-                               json.dumps(ss.messages, ensure_ascii=False, indent=1, default=str),
-                               file_name="corridor_trace.json", use_container_width=True)
-            if st.button("Clear chat", use_container_width=True):
-                ss.messages = []
-                st.rerun()
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.markdown("#### 💬 Corridor risk agent")
+        with st.popover("⚙️", help="Agent settings, export, clear"):
+            model = st.selectbox("Model", MODELS, key="agent_model")
+            use_tools = st.toggle("Use tools (off = baseline LLM)", value=True, key="agent_tools")
+            if ss.messages:
+                st.download_button("Export report (.md)", report_markdown(ss.messages),
+                                   file_name="corridor_report.md", width="stretch")
+                st.download_button("Export trace (.json)",
+                                   json.dumps(ss.messages, ensure_ascii=False, indent=1, default=str),
+                                   file_name="corridor_trace.json", width="stretch")
+                if st.button("Clear chat", width="stretch"):
+                    ss.messages = []
+                    st.rerun()
 
-    for m in ss.messages:
-        with st.chat_message(m["role"]):
-            if m.get("scenario"):
-                st.caption("🗺️ Map scenario: " + ", ".join(m["scenario"]) + " closed")
-            st.markdown(m["content"])
-            if m["role"] == "assistant":
-                render_trace(m.get("trace", []))
-                if m.get("usage"):
-                    st.caption(f"{m['model']} · tools {'on' if m['tools'] else 'off'} · {m['usage']}")
+    box = st.container(height=height)
+    with box:
+        intro = st.empty()
+        if not ss.messages:
+            with intro.container():
+                st.caption("Ask about a disruption, or try an example:")
+                for i, ex in enumerate(EXAMPLES):
+                    if st.button(ex, key=f"agent_example_{i}", width="stretch"):
+                        ss.pending = ex
+        for m in ss.messages:
+            render_message(m)
 
-    prompt = st.chat_input("Describe a disruption scenario or ask a question…") or ss.pop("pending", None)
+    scenario = ss.get(SCENARIO, [])
+    if scenario:
+        use_scenario = st.toggle("Map scenario: " + ", ".join(scenario) + " closed", value=True,
+                                 key="agent_scenario", help="Add the chokepoints closed on the map to the question")
+    else:
+        use_scenario = False
+        st.caption("No chokepoints closed on the map.")
+
+    prompt = st.chat_input("Describe a disruption or ask a question…", submit_mode="disable") \
+        or ss.pop("pending", None)
     if not prompt:
-        return
+        return None
+    intro.empty()
     ss.messages.append({"role": "user", "content": prompt,
                         "scenario": list(scenario) if use_scenario else []})
-    with st.chat_message("user"):
-        if use_scenario:
-            st.caption("🗺️ Map scenario: " + ", ".join(scenario) + " closed")
-        st.markdown(prompt)
+    return lambda: _run_turn(box, model, use_tools)
 
-    with st.chat_message("assistant"):
-        status = st.status("Thinking…", expanded=True)
-        answer_box = st.empty()
-        streamed = {"text": "", "shown": 0.0}
 
-        def on_event(e):
-            if e["type"] == "delta":
-                if not streamed["text"]:
-                    status.update(label="Writing…")
-                streamed["text"] += e["text"]
-                if time.time() - streamed["shown"] > 0.1:  # redraw at most 10x per second
-                    answer_box.markdown(streamed["text"] + " ▌")
-                    streamed["shown"] = time.time()
-            elif e["type"] == "thought":  # the streamed text was a note before tool calls
-                streamed["text"] = ""
+def _run_turn(box, model, use_tools):
+    ss = st.session_state
+    with box:
+        render_message(ss.messages[-1])
+        with st.chat_message("assistant"):
+            status = st.status("Thinking…", expanded=True)
+            answer_box = st.empty()
+            streamed = {"text": "", "shown": 0.0}
+
+            def on_event(e):
+                if e["type"] == "delta":
+                    if not streamed["text"]:
+                        status.update(label="Writing…")
+                    streamed["text"] += e["text"]
+                    if time.time() - streamed["shown"] > 0.1:  # redraw at most 10x per second
+                        answer_box.markdown(streamed["text"] + " ▌")
+                        streamed["shown"] = time.time()
+                elif e["type"] == "thought":  # the streamed text was a note before tool calls
+                    streamed["text"] = ""
+                    answer_box.empty()
+                    status.write(f"💭 {e['text'][:300]}")
+                    status.update(label="Thinking…")
+                elif e["type"] == "tool":
+                    status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
+
+            history = [{"role": m["role"], "content": with_scenario(m)} for m in ss.messages]
+            try:
+                out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
+            except Exception as e:
+                status.update(label="Failed", state="error")
                 answer_box.empty()
-                status.write(f"💭 {e['text'][:300]}")
-                status.update(label="Thinking…")
-            elif e["type"] == "tool":
-                status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
-
-        history = [{"role": m["role"], "content": with_scenario(m)} for m in ss.messages]
-        try:
-            out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
-        except Exception as e:
-            status.update(label="Failed", state="error")
-            answer_box.empty()
-            st.error(f"{type(e).__name__}: {e}")
-            ss.messages.pop()
-            return
-        status.update(label=f"Done · {out['usage']['llm_calls']} LLM calls", state="complete", expanded=False)
-        answer_box.markdown(out["answer"])
-        render_trace(out["trace"])
-        geometry = latest_geometry(out["trace"])
-        if geometry:
-            ss[AGENT_ROUTES] = geometry
-            st.caption(f"🗺️ {len(geometry['features'])} route(s) drawn on the Route planner map.")
+                st.error(f"{type(e).__name__}: {e}")
+                ss.messages.pop()
+                return
+    geometry = latest_geometry(out["trace"])
+    if geometry:
+        ss[AGENT_ROUTES] = geometry
     ss.messages.append({"role": "assistant", "content": out["answer"], "trace": out["trace"],
                         "usage": out["usage"], "model": model, "tools": use_tools})
+    st.rerun()
+
+
+def chat_page():
+    """The chat on its own page, without the map."""
+    st.title("🚢 Corridor Risk Agent")
+    run_turn = chat_panel(height=700)
+    if run_turn:
+        run_turn()
 
 
 if __name__ == "__main__":

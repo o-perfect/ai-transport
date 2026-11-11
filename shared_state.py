@@ -1,5 +1,5 @@
-"""st.session_state keys shared by the map page (app_planner.py) and the chat
-page (app_chat.py). Both run as pages of app.py, so they see the same state.
+"""st.session_state keys shared by the map (app.py) and the chat beside it
+(app_chat.py).
 
 AGENT_ROUTES  chat -> map. GeoJSON FeatureCollection of the routes from the
               agent's latest compare_routes call (its "_geometry"), baseline
