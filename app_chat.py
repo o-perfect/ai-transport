@@ -1,6 +1,8 @@
-"""Streamlit chat page for the agent:  streamlit run app_chat.py
+"""Streamlit chat page for the agent. Runs as a page of app.py (streamlit run app.py),
+or on its own without the map: streamlit run app_chat.py
 
-Can be merged into the main app as a page; everything lives in chat_page().
+Everything lives in chat_page(). Chokepoints closed on the map come in as the
+scenario, and compare_routes geometry goes out to the map (see shared_state.py).
 """
 
 import datetime as dt
@@ -10,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from agent.core import MODELS, run_agent
+from shared_state import AGENT_ROUTES, SCENARIO
 
 EXAMPLES = [
     "The Suez Canal is blocked. We ship containers Shanghai to Rotterdam on a 14,000 TEU ship. Options and cost?",
@@ -65,11 +68,26 @@ def render_charts(tools):
             st.dataframe(df, hide_index=True)
 
 
+def with_scenario(m):
+    """Message content as sent to the agent: the map scenario goes in front of the question."""
+    if m["role"] != "user" or not m.get("scenario"):
+        return m["content"]
+    return f"[Map scenario: closed chokepoints: {', '.join(m['scenario'])}]\n\n{m['content']}"
+
+
+def latest_geometry(trace):
+    """GeoJSON of the last compare_routes call in an agent turn, if any."""
+    for e in reversed(trace):
+        if e["type"] == "tool" and e["name"] == "compare_routes" and "_geometry" in e["result"]:
+            return e["result"]["_geometry"]
+    return None
+
+
 def report_markdown(messages):
     lines = [f"# Corridor risk report\n\n_Generated {dt.datetime.now():%Y-%m-%d %H:%M}_\n"]
     for m in messages:
         if m["role"] == "user":
-            lines.append(f"## Question\n\n{m['content']}\n")
+            lines.append(f"## Question\n\n{with_scenario(m)}\n")
         else:
             lines.append(f"## Answer\n\n{m['content']}\n")
             tools = [e for e in m.get("trace", []) if e["type"] == "tool"]
@@ -88,6 +106,14 @@ def chat_page():
     with st.sidebar:
         model = st.selectbox("Model", MODELS)
         use_tools = st.toggle("Use tools (off = baseline LLM)", value=True)
+        scenario = ss.get(SCENARIO, [])
+        if scenario:
+            use_scenario = st.toggle("Include map scenario", value=True,
+                                     help="Chokepoints closed on the Route planner map")
+            st.caption("Closed on the map: " + ", ".join(scenario))
+        else:
+            use_scenario = False
+            st.caption("No chokepoints closed on the map.")
         st.caption("Example scenarios")
         for ex in EXAMPLES:
             if st.button(ex, use_container_width=True):
@@ -104,6 +130,8 @@ def chat_page():
 
     for m in ss.messages:
         with st.chat_message(m["role"]):
+            if m.get("scenario"):
+                st.caption("🗺️ Map scenario: " + ", ".join(m["scenario"]) + " closed")
             st.markdown(m["content"])
             if m["role"] == "assistant":
                 render_trace(m.get("trace", []))
@@ -113,8 +141,11 @@ def chat_page():
     prompt = st.chat_input("Describe a disruption scenario or ask a question…") or ss.pop("pending", None)
     if not prompt:
         return
-    ss.messages.append({"role": "user", "content": prompt})
+    ss.messages.append({"role": "user", "content": prompt,
+                        "scenario": list(scenario) if use_scenario else []})
     with st.chat_message("user"):
+        if use_scenario:
+            st.caption("🗺️ Map scenario: " + ", ".join(scenario) + " closed")
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
@@ -126,7 +157,7 @@ def chat_page():
             elif e["type"] == "thought":
                 status.write(f"💭 {e['text'][:300]}")
 
-        history = [{"role": m["role"], "content": m["content"]} for m in ss.messages]
+        history = [{"role": m["role"], "content": with_scenario(m)} for m in ss.messages]
         try:
             out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
         except Exception as e:
@@ -137,6 +168,10 @@ def chat_page():
         status.update(label=f"Done · {out['usage']['llm_calls']} LLM calls", state="complete", expanded=False)
         st.markdown(out["answer"])
         render_trace(out["trace"])
+        geometry = latest_geometry(out["trace"])
+        if geometry:
+            ss[AGENT_ROUTES] = geometry
+            st.caption(f"🗺️ {len(geometry['features'])} route(s) drawn on the Route planner map.")
     ss.messages.append({"role": "assistant", "content": out["answer"], "trace": out["trace"],
                         "usage": out["usage"], "model": model, "tools": use_tools})
 

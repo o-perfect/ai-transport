@@ -3,14 +3,18 @@
 Intelligent agent for risk assessment and safeguard decision-making for international
 transport corridors facing geopolitical shocks (TE8315, Topic 5).
 
-Two parts:
+One Streamlit app (`app.py`) with two pages:
 
-- **Shipping Route Planner** (`app.py`): plan a sea route between any two ports, close
+- **Route planner** (`app_planner.py`): plan a sea route between any two ports, close
   chokepoints (Suez, Bab-el-Mandeb, Hormuz, …) and compare the detour's distance, time,
   cost and risk on a map.
-- **Corridor Risk Agent** (`app_chat.py`, `chat_cli.py`): an LLM agent that uses tools
+- **Corridor risk agent** (`app_chat.py`, also `chat_cli.py`): an LLM agent that uses tools
   (live IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write
   a risk assessment and contingency plan.
+
+The pages talk through `st.session_state` (keys in `shared_state.py`): chokepoints closed
+on the map are added to the chat prompt as the scenario, and the routes from the agent's
+last `compare_routes` call are drawn on the map.
 
 ## Setup
 
@@ -23,8 +27,8 @@ echo "SJTU_API_KEY=sk-..." > .env             # never commit this
 ## Run
 
 ```bash
-.venv/bin/streamlit run app.py                      # route planner + map
-.venv/bin/streamlit run app_chat.py                 # chat UI
+.venv/bin/streamlit run app.py                      # route planner + agent chat
+.venv/bin/streamlit run app_chat.py                 # chat UI only (no map)
 .venv/bin/python chat_cli.py                        # terminal chat
 .venv/bin/python chat_cli.py --no-tools -m qwen     # baseline: plain LLM, no tools
 ```
@@ -32,7 +36,10 @@ echo "SJTU_API_KEY=sk-..." > .env             # never commit this
 ## Project layout
 
 ```
-app.py                 Streamlit page + map (UI only)
+app.py                 Streamlit entry: page navigation, map scenario -> session state
+app_planner.py         Route planner page + map (UI only); draws agent routes
+app_chat.py            Agent chat page: tool-call trace, charts, export (chat_page())
+shared_state.py        Session-state keys shared by the two pages
 core/ports.py          ~3,900 world ports (bundled with the searoute package)
 core/ships.py          Ship types + attributes; ShipType.to_features() for ML
 core/chokepoints.py    Chokepoint registry: open/close, risk, add custom ones
@@ -43,8 +50,7 @@ data/ships.json        Ship type definitions
 
 agent/core.py          Agent loop, system prompt, task understanding, report format
 agent/tools.py         Tools: live PortWatch traffic, route + cost comparison, affected links
-agent/network.py       Coarse sea-lane graph + Dijkstra (to be replaced by searoute)
-app_chat.py            Streamlit chat page: tool-call trace, charts, export (chat_page())
+agent/network.py       Agent routing on searoute: port table, PortWatch -> passage map
 chat_cli.py            Terminal chat for quick testing
 ```
 
@@ -79,6 +85,11 @@ python -m core.chokepoints open hormuz
 - Costs are a simple, transparent model: fuel ∝ speed³, tolls × ship size
   factor, war-risk premium = % of hull value per risky chokepoint. All numbers
   are rough placeholders for a school project, not market data.
+- The agent routes on the same `searoute` network. Its chokepoints are the IMF PortWatch
+  chokepoints that have a searoute passage (Suez, Panama, Bosporus, Bab el-Mandeb,
+  Malacca, Hormuz, Cape of Good Hope, Gibraltar, Sunda, Bering). Others (e.g. Taiwan,
+  Dover) can't be blocked by the agent and come back as `unrecognised_blocked`.
+  Alternatives are found by re-routing with each passage the route uses blocked.
 - LLM API: `https://models.sjtu.edu.cn/api/v1`, models `deepseek-chat`, `qwen`,
   `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
 - PortWatch responses are cached for 6 h in `.cache/`.

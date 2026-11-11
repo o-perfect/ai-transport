@@ -121,10 +121,10 @@ def get_chokepoint_traffic(chokepoint, days=30):
     }
 
 
-def _route_cost(nm, path, vessel, speed_knots, fuel_price, war_risk, war_risk_pct):
+def _route_cost(r, vessel, speed_knots, fuel_price, war_risk, war_risk_pct):
+    nm, chokes = r["distance_nm"], r["chokepoints"]
     days = nm / (speed_knots * 24)
     fuel_t = days * vessel["fuel_t_day"] * (speed_knots / vessel["ref_knots"]) ** 3
-    chokes = [n for n in path if net.NODES[n][2] == "chokepoint"]
     tolls = sum(vessel["tolls"].get(c, 0) for c in chokes)
     risky = [c for c in chokes if c in war_risk]
     insurance = vessel["hull_value_usd"] * war_risk_pct / 100 if risky else 0
@@ -137,8 +137,15 @@ def _route_cost(nm, path, vessel, speed_knots, fuel_price, war_risk, war_risk_pc
                      "war_risk_insurance": round(insurance),
                      "total": round(fuel_cost + charter + tolls + insurance)},
         "fuel_t": round(fuel_t), "co2_t": round(fuel_t * CO2_PER_T_FUEL),
-        "path": path,
+        "path": r["path"],
     }
+
+
+def _feature(r, role, label):
+    return {"type": "Feature", "geometry": r["geometry"],
+            "properties": {"role": role, "label": label, "origin": r["path"][0],
+                           "destination": r["path"][-1], "distance_nm": round(r["distance_nm"]),
+                           "chokepoints": r["chokepoints"]}}
 
 
 def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="container_large",
@@ -149,24 +156,25 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
     o, d = net.resolve(origin), net.resolve(destination)
     bad = [x for x, r in ((origin, o), (destination, d)) if r not in net.PORTS]
     if bad:
-        return {"error": f"Unknown port(s) {bad}. Supported ports: {net.PORTS}"}
+        return {"error": f"Unknown port(s) {bad}. Supported ports: {list(net.PORTS)}"}
     if vessel_type not in VESSELS:
         return {"error": f"Unknown vessel_type. Options: {list(VESSELS)}"}
     vessel = VESSELS[vessel_type]
-    blocked = [net.resolve(c) for c in blocked_chokepoints if net.resolve(c)]
-    unknown = [c for c in blocked_chokepoints if not net.resolve(c)]
+    blocked = [net.resolve(c) for c in blocked_chokepoints if net.resolve(c) in net.CHOKEPOINTS]
+    unknown = [c for c in blocked_chokepoints if net.resolve(c) not in net.CHOKEPOINTS]
     war_risk = [net.resolve(c) for c in war_risk_chokepoints if net.resolve(c)]
     restricted = vessel["no_go"]
 
-    def costed(nm, path):
-        return _route_cost(nm, path, vessel, speed_knots, fuel_price_usd_per_t, war_risk,
+    def costed(r):
+        return _route_cost(r, vessel, speed_knots, fuel_price_usd_per_t, war_risk,
                            war_risk_premium_pct)
 
-    base = net.alternatives(o, d, restricted, k=1)
-    if not base:
+    base = net.route(o, d, restricted)
+    if base is None:
         return {"error": "No route between these ports in the network model"}
-    baseline = costed(*base[0])
-    alts = [costed(nm, p) for nm, p in net.alternatives(o, d, tuple(blocked) + tuple(restricted), k=3)]
+    baseline = costed(base)
+    alt_routes = net.alternatives(o, d, tuple(blocked) + tuple(restricted), k=3)
+    alts = [costed(r) for r in alt_routes]
     for a in alts:
         a["extra_vs_baseline"] = {
             "distance_nm": a["distance_nm"] - baseline["distance_nm"],
@@ -183,6 +191,10 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
                         "note": "Sea time only; excludes port time, canal queues and cargo inventory cost."},
         "baseline_route": baseline,
         "alternatives": alts if alts else "No feasible route with these blockages",
+        "_geometry": {"type": "FeatureCollection", "features": [
+            _feature(base, "baseline", "Baseline: " + (" / ".join(base["chokepoints"]) or "open sea")),
+            *(_feature(r, "alternative", f"Alt {i}: " + (" / ".join(r["chokepoints"]) or "open sea"))
+              for i, r in enumerate(alt_routes, 1))]},
     }
 
 
@@ -191,24 +203,26 @@ def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=
     much distance/time each loses if it is closed. Sorted by extra sea days."""
     c = net.resolve(chokepoint)
     if c not in net.CHOKEPOINTS:
-        return {"error": f"'{chokepoint}' is not in the routing network. Options: {net.CHOKEPOINTS}"}
+        return {"error": f"'{chokepoint}' is not in the routing network. Options: {list(net.CHOKEPOINTS)}"}
     no_go = tuple(VESSELS.get(vessel_type, VESSELS["container_large"])["no_go"])
     rows = []
-    ports = net.PORTS
+    ports = list(net.PORTS)
     for i, a in enumerate(ports):
         for b in ports[i + 1:]:
-            nm, path = net.shortest_path(a, b, no_go)
-            if path is None or c not in path:
+            r = net.route(a, b, no_go)
+            if r is None or c not in r["chokepoints"]:
                 continue
-            nm2, path2 = net.shortest_path(a, b, no_go + (c,))
+            nm = r["distance_nm"]
+            r2 = net.route(a, b, no_go + (c,))
             row = {"link": f"{a} - {b}", "baseline_nm": round(nm)}
-            if path2 is None:
+            if r2 is None:
                 row.update(detour="none (link cut)")
             else:
+                nm2 = r2["distance_nm"]
                 row.update(detour_nm=round(nm2), extra_nm=round(nm2 - nm),
                            extra_days=round((nm2 - nm) / (speed_knots * 24), 1),
                            extra_pct=round(100 * (nm2 - nm) / nm, 1),
-                           detour_via=[n for n in path2 if net.NODES[n][2] == "chokepoint"])
+                           detour_via=r2["chokepoints"])
             rows.append(row)
     rows.sort(key=lambda r: -r.get("extra_days", 1e9))
     return {"chokepoint": c, "speed_knots": speed_knots, "links_affected": len(rows),
@@ -217,8 +231,8 @@ def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=
 
 # --- OpenAI-style tool schemas ----------------------------------------------
 
-_ports_enum = net.PORTS
-_choke_enum = net.CHOKEPOINTS
+_ports_enum = list(net.PORTS)
+_choke_enum = list(net.CHOKEPOINTS)
 
 SCHEMAS = [
     {"type": "function", "function": {

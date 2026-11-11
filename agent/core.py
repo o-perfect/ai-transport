@@ -26,6 +26,9 @@ or estimate such figures yourself. If a tool cannot answer, say so.
 - For a closure scenario, typically: check live traffic at the chokepoint, find the affected links, \
 compare routes for the specific trade lane(s) the user cares about.
 - If the user's port or chokepoint is not supported, pick the nearest supported one and say so.
+- A message may start with "[Map scenario: closed chokepoints: ...]". Those are the chokepoints the \
+user closed on the map: treat them as blocked (pass them as blocked_chokepoints) unless the question \
+says otherwise. If one is not in the routing network, say it could not be modelled.
 - Reply in the user's language.
 
 Final answer format (markdown):
@@ -34,7 +37,8 @@ Final answer format (markdown):
 3. **Route options** - a table: route (via), distance nm, sea days, total cost USD, extra vs baseline.
 4. **Risk assessment** - a qualitative rating (Low/Medium/High/Critical) with reasons.
 5. **Recommendations** - concrete short-term and medium-term mitigation actions.
-6. **Assumptions & sources** - key parameters used and data sources (IMF PortWatch, network model).
+6. **Assumptions & sources** - key parameters used and data sources (IMF PortWatch, searoute \
+maritime network).
 """
 
 BASELINE_PROMPT = """You are a maritime transport risk analyst. Answer the user's question about \
