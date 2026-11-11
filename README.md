@@ -1,4 +1,4 @@
-# Shipping Route Planner
+# AI-transport project: Shipping Route Planner
 
 Plan a sea route between any two ports, close chokepoints (Suez, Bab-el-Mandeb,
 Hormuz, …) and compare the detour's distance, time, cost and risk.
