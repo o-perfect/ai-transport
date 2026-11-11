@@ -56,8 +56,12 @@ chat_cli.py            Terminal chat for quick testing
 ## Notes / assumptions
 
 - Routing uses the open-source `searoute` maritime network. Built-in passages
-  (Suez, Panama, Malacca, …) are blocked natively. Custom chokepoints block
-  every network edge inside their radius.
+  (Suez, Panama, Malacca, …) are blocked natively. A custom chokepoint with a
+  `gate` (a line across the strait, e.g. the Taiwan Strait) blocks only the
+  network edges crossing that line, so ports along the strait stay reachable.
+  One without a gate blocks every edge inside its radius, which also cuts off
+  any port inside that circle.
+- Tests: `python -m unittest discover -s tests -t .`
 - Ship size limits apply automatically. For example, a VLCC is too deep for
   Suez and a 400 m container ship is too long for Panama.
 - Costs are a simple, transparent model: fuel ∝ speed³, tolls × ship size

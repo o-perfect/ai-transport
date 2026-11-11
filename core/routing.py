@@ -2,8 +2,9 @@
 
 Built on the `searoute` maritime network graph. Chokepoints that map to a
 built-in searoute passage are blocked via its `restrictions`; custom
-chokepoints (any lat/lon + radius) are blocked by tagging every network edge
-inside their radius as a restricted passage.
+chokepoints are blocked by tagging network edges as a restricted passage:
+the edges crossing their `gate` line if they have one, otherwise every edge
+inside their radius.
 """
 import copy
 import math
@@ -42,16 +43,58 @@ def _custom_tag(cp: Chokepoint) -> str:
     return f"custom::{cp.id}"
 
 
+def _gate(cp: Chokepoint):
+    """The chokepoint's gate as a hashable tuple of (lat, lon) points, or None."""
+    return tuple((float(lat), float(lon)) for lat, lon in cp.gate) if cp.gate else None
+
+
+def _orient(o, a, b) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _segments_cross(p1, p2, q1, q2) -> bool:
+    """Whether segments p1-p2 and q1-q2 intersect (touching counts), treating
+    (lat, lon) as plane coordinates. Fine for gates a few hundred km long."""
+    if (max(p1[0], p2[0]) < min(q1[0], q2[0]) or max(q1[0], q2[0]) < min(p1[0], p2[0])
+            or max(p1[1], p2[1]) < min(q1[1], q2[1]) or max(q1[1], q2[1]) < min(p1[1], p2[1])):
+        return False
+    return (_orient(q1, q2, p1) * _orient(q1, q2, p2) <= 0
+            and _orient(p1, p2, q1) * _orient(p1, p2, q2) <= 0)
+
+
+def _crosses_gate(gate, a, b) -> bool:
+    """Whether segment a-b ((lat, lon) points) crosses the gate polyline."""
+    return any(_segments_cross(a, b, g1, g2) for g1, g2 in zip(gate, gate[1:]))
+
+
 @lru_cache(maxsize=16)
 def _network_with_custom_blocks(blocks: tuple):
-    """Copy of the searoute network with edges near custom chokepoints tagged.
-    `blocks` = ((tag, lat, lon, radius_km), ...). Cached per combination."""
+    """Copy of the searoute network with edges blocked by custom chokepoints
+    tagged. `blocks` = ((tag, gate, lat, lon, radius_km), ...): with a gate,
+    edges crossing it are tagged; without, edges with an end inside the
+    radius. Cached per combination.
+
+    searoute keeps separate edge data for each direction, and edges() yields
+    only one, so the tag is written to both: otherwise the route can still
+    pass the "blocked" edge the other way.
+    """
     M = copy.deepcopy(setup_M())
-    for u, v, data in M.edges(data=True):
-        for tag, lat, lon, radius in blocks:
-            if any(haversine_km(lat, lon, y, x) <= radius for (x, y) in (u, v)):
-                data["passage"] = tag
+    hits = {}
+    for u, v in M.edges():
+        (x1, y1), (x2, y2) = u, v
+        for tag, gate, lat, lon, radius in blocks:
+            if gate:  # edges spanning the antimeridian are never near a gate
+                hit = abs(x1 - x2) < 180 and _crosses_gate(gate, (y1, x1), (y2, x2))
+            else:
+                hit = any(haversine_km(lat, lon, y, x) <= radius for (x, y) in (u, v))
+            if hit:
+                hits[(u, v)] = tag
                 break
+    for (u, v), tag in hits.items():
+        for a, b in ((u, v), (v, u)):
+            data = M.get_edge_data(a, b)
+            if data is not None:
+                data["passage"] = tag
     return M
 
 
@@ -72,6 +115,14 @@ def _unwrap(lonlat_coords):
 def _route_passes(cp: Chokepoint, passages: list, coords) -> bool:
     if cp.searoute_passage:
         return cp.searoute_passage in passages
+    gate = _gate(cp)
+    if gate:
+        for a, b in zip(coords, coords[1:]):
+            # coords are unwrapped; shift each segment back near [-180, 180)
+            shift = -360 * math.floor((a[1] + 180) / 360)
+            if _crosses_gate(gate, (a[0], a[1] + shift), (b[0], b[1] + shift)):
+                return True
+        return False
     return any(haversine_km(cp.lat, cp.lon, lat, ((lon + 180) % 360) - 180) <= cp.radius_km
                for lat, lon in coords)
 
@@ -95,7 +146,7 @@ def compute_route(origin: dict, destination: dict, chokepoints: list[Chokepoint]
             restrictions.append(cp.searoute_passage)
         else:
             restrictions.append(_custom_tag(cp))
-            custom.append((_custom_tag(cp), cp.lat, cp.lon, cp.radius_km))
+            custom.append((_custom_tag(cp), _gate(cp), cp.lat, cp.lon, cp.radius_km))
     M = _network_with_custom_blocks(tuple(sorted(custom))) if custom else None
 
     o = [origin["lon"], origin["lat"]]
