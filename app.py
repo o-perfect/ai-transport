@@ -16,7 +16,7 @@ from core.costs import estimate_voyage
 from core.ports import load_ports
 from core.routing import compute_route
 from core.ships import load_ships
-from shared_state import AGENT_ROUTES, SCENARIO, scenario_names
+from shared_state import AGENT_BUSY, AGENT_ROUTES, SCENARIO, scenario_names
 
 st.set_page_config(page_title="Shipping Route Planner", page_icon="🚢", layout="wide")
 
@@ -56,18 +56,22 @@ def default_index(locode: str) -> int:
 
 
 # ---------------------------------------------------------------- sidebar
+busy = st.session_state.get(AGENT_BUSY, False)  # frozen while the agent works
+
 with st.sidebar:
+    if busy:
+        st.info("🔒 Controls are locked while the agent is working.")
     st.header("Route")
     origin_label = st.selectbox("From", labels, index=default_index("NLRTM"),
-                                placeholder="Search a port…")
+                                placeholder="Search a port…", disabled=busy)
     dest_label = st.selectbox("To", labels, index=default_index("CNSHA"),
-                              placeholder="Search a port…")
+                              placeholder="Search a port…", disabled=busy)
 
     st.header("Ship")
-    ship = st.selectbox("Ship type", ships, format_func=lambda s: s.name)
+    ship = st.selectbox("Ship type", ships, format_func=lambda s: s.name, disabled=busy)
     speed = st.slider("Speed (knots)", 8.0, 25.0, float(ship.service_speed_kn), 0.5,
-                      key=f"speed_{ship.id}")
-    bunker = st.number_input("Fuel price (USD / tonne)", 200, 1500, 600, 10)
+                      key=f"speed_{ship.id}", disabled=busy)
+    bunker = st.number_input("Fuel price (USD / tonne)", 200, 1500, 600, 10, disabled=busy)
     with st.expander("Ship attributes"):
         st.dataframe(
             pd.DataFrame(ship.to_features().items(), columns=["Attribute", "Value"]),
@@ -77,7 +81,7 @@ with st.sidebar:
     st.header("Chokepoints")
     st.caption("Switch off to close a chokepoint. The route will avoid it.")
     for cp in registry.all():
-        is_open = st.toggle(cp.name, value=cp.is_open, key=f"cp_{cp.id}_{cp.status}",
+        is_open = st.toggle(cp.name, value=cp.is_open, key=f"cp_{cp.id}_{cp.status}", disabled=busy,
                             help=f"Risk score {cp.risk_score:.2f} · "
                                  f"war-risk premium {cp.war_risk_premium_pct}% of hull value"
                                  + (f" · {cp.note}" if cp.note else ""))
@@ -87,14 +91,15 @@ with st.sidebar:
 
     with st.expander("Add a custom chokepoint"):
         with st.form("add_cp", clear_on_submit=True):
-            name = st.text_input("Name", placeholder="e.g. Danish Straits")
+            name = st.text_input("Name", placeholder="e.g. Danish Straits", disabled=busy)
             c1, c2 = st.columns(2)
-            lat = c1.number_input("Latitude", -90.0, 90.0, 0.0, format="%.3f")
-            lon = c2.number_input("Longitude", -180.0, 180.0, 0.0, format="%.3f")
-            radius = st.number_input("Radius (km)", 10, 1000, 100)
-            risk = st.slider("Risk score", 0.0, 1.0, 0.3, 0.05)
-            premium = st.number_input("War-risk premium (% of hull)", 0.0, 5.0, 0.0, 0.05)
-            if st.form_submit_button("Add chokepoint") and name.strip():
+            lat = c1.number_input("Latitude", -90.0, 90.0, 0.0, format="%.3f", disabled=busy)
+            lon = c2.number_input("Longitude", -180.0, 180.0, 0.0, format="%.3f", disabled=busy)
+            radius = st.number_input("Radius (km)", 10, 1000, 100, disabled=busy)
+            risk = st.slider("Risk score", 0.0, 1.0, 0.3, 0.05, disabled=busy)
+            premium = st.number_input("War-risk premium (% of hull)", 0.0, 5.0, 0.0, 0.05,
+                                      disabled=busy)
+            if st.form_submit_button("Add chokepoint", disabled=busy) and name.strip():
                 registry.add(name.strip(), lat, lon, radius, risk_score=risk,
                              war_risk_premium_pct=premium)
                 st.rerun()
@@ -199,7 +204,7 @@ def planner():
         c1, c2 = st.columns([5, 1], vertical_alignment="center")
         c1.info(f"Also showing {len(agent_routes)} route(s) from the agent chat: "
                 f"{first['origin']} → {first['destination']}. Hover a line for details.")
-        if c2.button("Clear agent routes", width="stretch"):
+        if c2.button("Clear agent routes", width="stretch", disabled=busy):
             del st.session_state[AGENT_ROUTES]
             st.rerun()
 

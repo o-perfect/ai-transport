@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from agent.core import MODELS, run_agent
-from shared_state import AGENT_ROUTES, SCENARIO
+from shared_state import AGENT_BUSY, AGENT_ROUTES, SCENARIO
 
 EXAMPLES = [
     "The Suez Canal is blocked. We ship containers Shanghai to Rotterdam on a 14,000 TEU ship. Options and cost?",
@@ -113,6 +113,14 @@ def render_message(m):
                 st.caption(f"{m['model']} · tools {'on' if m['tools'] else 'off'} · {m['usage']}")
 
 
+def _start_turn(example=None):
+    """Submit callback: runs before the page redraws, so the map can freeze its
+    controls for the whole turn (see AGENT_BUSY)."""
+    st.session_state[AGENT_BUSY] = True
+    if example:
+        st.session_state.pending = example
+
+
 def chat_panel(height=640):
     """The chat inside the current container: settings, messages and input.
 
@@ -121,19 +129,21 @@ def chat_panel(height=640):
     it reruns the app when done so the map picks up the agent's routes."""
     ss = st.session_state
     ss.setdefault("messages", [])
+    busy = ss.get(AGENT_BUSY, False)
 
     with st.container(horizontal=True, vertical_alignment="center"):
         st.markdown("#### 💬 Corridor risk agent")
         with st.popover("⚙️", help="Agent settings, export, clear"):
-            model = st.selectbox("Model", MODELS, key="agent_model")
-            use_tools = st.toggle("Use tools (off = baseline LLM)", value=True, key="agent_tools")
+            model = st.selectbox("Model", MODELS, key="agent_model", disabled=busy)
+            use_tools = st.toggle("Use tools (off = baseline LLM)", value=True, key="agent_tools",
+                                  disabled=busy)
             if ss.messages:
                 st.download_button("Export report (.md)", report_markdown(ss.messages),
-                                   file_name="corridor_report.md", width="stretch")
+                                   file_name="corridor_report.md", width="stretch", disabled=busy)
                 st.download_button("Export trace (.json)",
                                    json.dumps(ss.messages, ensure_ascii=False, indent=1, default=str),
-                                   file_name="corridor_trace.json", width="stretch")
-                if st.button("Clear chat", width="stretch"):
+                                   file_name="corridor_trace.json", width="stretch", disabled=busy)
+                if st.button("Clear chat", width="stretch", disabled=busy):
                     ss.messages = []
                     st.rerun()
 
@@ -144,22 +154,28 @@ def chat_panel(height=640):
             with intro.container():
                 st.caption("Ask about a disruption, or try an example:")
                 for i, ex in enumerate(EXAMPLES):
-                    if st.button(ex, key=f"agent_example_{i}", width="stretch"):
-                        ss.pending = ex
+                    st.button(ex, key=f"agent_example_{i}", width="stretch", disabled=busy,
+                              on_click=_start_turn, args=(ex,))
         for m in ss.messages:
             render_message(m)
+        if "agent_error" in ss:  # from a failed turn, kept across the rerun that unfreezes the page
+            st.error(ss.pop("agent_error"))
 
     scenario = ss.get(SCENARIO, [])
     if scenario:
         use_scenario = st.toggle("Map scenario: " + ", ".join(scenario) + " closed", value=True,
-                                 key="agent_scenario", help="Add the chokepoints closed on the map to the question")
+                                 key="agent_scenario", disabled=busy,
+                                 help="Add the chokepoints closed on the map to the question")
     else:
         use_scenario = False
         st.caption("No chokepoints closed on the map.")
 
-    prompt = st.chat_input("Describe a disruption or ask a question…", submit_mode="disable") \
-        or ss.pop("pending", None)
+    prompt = st.chat_input("Describe a disruption or ask a question…", submit_mode="disable",
+                           on_submit=_start_turn) or ss.pop("pending", None)
     if not prompt:
+        if busy:  # a turn was cancelled (e.g. page reload mid-run): unfreeze
+            ss[AGENT_BUSY] = False
+            st.rerun()
         return None
     intro.empty()
     ss.messages.append({"role": "user", "content": prompt,
@@ -196,16 +212,16 @@ def _run_turn(box, model, use_tools):
             try:
                 out = run_agent(history, model=model, use_tools=use_tools, on_event=on_event)
             except Exception as e:
-                status.update(label="Failed", state="error")
-                answer_box.empty()
-                st.error(f"{type(e).__name__}: {e}")
                 ss.messages.pop()
-                return
+                ss.agent_error = f"{type(e).__name__}: {e}"
+                ss[AGENT_BUSY] = False
+                st.rerun()
     geometry = latest_geometry(out["trace"])
     if geometry:
         ss[AGENT_ROUTES] = geometry
     ss.messages.append({"role": "assistant", "content": out["answer"], "trace": out["trace"],
                         "usage": out["usage"], "model": model, "tools": use_tools})
+    ss[AGENT_BUSY] = False
     st.rerun()
 
 
