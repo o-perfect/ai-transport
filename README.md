@@ -1,15 +1,32 @@
-# AI-transport project: Shipping Route Planner
+# AI-transport project
 
-Plan a sea route between any two ports, close chokepoints (Suez, Bab-el-Mandeb,
-Hormuz, …) and compare the detour's distance, time, cost and risk.
+Intelligent agent for risk assessment and safeguard decision-making for international
+transport corridors facing geopolitical shocks (TE8315, Topic 5).
 
-## Run it
+Two parts:
+
+- **Shipping Route Planner** (`app.py`): plan a sea route between any two ports, close
+  chokepoints (Suez, Bab-el-Mandeb, Hormuz, …) and compare the detour's distance, time,
+  cost and risk on a map.
+- **Corridor Risk Agent** (`app_chat.py`, `chat_cli.py`): an LLM agent that uses tools
+  (live IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write
+  a risk assessment and contingency plan.
+
+## Setup
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows  (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt
-streamlit run app.py
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt     # Windows: .venv\Scripts\pip ...
+echo "SJTU_API_KEY=sk-..." > .env             # never commit this
+```
+
+## Run
+
+```bash
+.venv/bin/streamlit run app.py                      # route planner + map
+.venv/bin/streamlit run app_chat.py                 # chat UI
+.venv/bin/python chat_cli.py                        # terminal chat
+.venv/bin/python chat_cli.py --no-tools -m qwen     # baseline: plain LLM, no tools
 ```
 
 ## Project layout
@@ -23,6 +40,12 @@ core/routing.py        Sea routing (searoute network) avoiding closed chokepoint
 core/costs.py          Fuel, time, tolls, war-risk insurance, risk score
 data/chokepoints.json  Chokepoint state (the "switches")
 data/ships.json        Ship type definitions
+
+agent/core.py          Agent loop, system prompt, task understanding, report format
+agent/tools.py         Tools: live PortWatch traffic, route + cost comparison, affected links
+agent/network.py       Coarse sea-lane graph + Dijkstra (to be replaced by searoute)
+app_chat.py            Streamlit chat page: tool-call trace, charts, export (chat_page())
+chat_cli.py            Terminal chat for quick testing
 ```
 
 ## For the AI agent: flipping a chokepoint switch
@@ -56,3 +79,8 @@ python -m core.chokepoints open hormuz
 - Costs are a simple, transparent model: fuel ∝ speed³, tolls × ship size
   factor, war-risk premium = % of hull value per risky chokepoint. All numbers
   are rough placeholders for a school project, not market data.
+- LLM API: `https://models.sjtu.edu.cn/api/v1`, models `deepseek-chat`, `qwen`,
+  `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
+- PortWatch responses are cached for 6 h in `.cache/`.
+- Agent cost figures (fuel burn, charter rates, canal tolls, war-risk premium) are
+  planning assumptions in `agent/tools.py::VESSELS`; cite them as such in the report.

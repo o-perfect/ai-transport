@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .env
 
+# Agent caches (PortWatch responses)
+.cache/
+
 # Editors / OS
 .vscode/
 .idea/
