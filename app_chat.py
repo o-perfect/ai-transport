@@ -189,8 +189,11 @@ def _run_turn(box, model, use_tools):
                     answer_box.empty()
                     status.write(f"💭 {e['text'][:300]}")
                     status.update(label="Thinking…")
+                elif e["type"] == "retry":
+                    status.update(label=f"Retrying: {e['reason']} (waiting {e['wait']:.0f}s)…")
                 elif e["type"] == "tool":
                     status.write(f"🔧 `{e['name']}` {json.dumps(e['args'], ensure_ascii=False)}")
+                    status.update(label="Thinking…")
 
             history = [{"role": m["role"], "content": m["content"]} for m in ss.messages]
             try:

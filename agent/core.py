@@ -1,10 +1,13 @@
 """Tool-calling agent loop over the SJTU OpenAI-compatible API."""
 
+import functools
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
+import openai
 from openai import OpenAI
 
 from .tools import FUNCTIONS, SCHEMAS
@@ -14,6 +17,10 @@ load_dotenv()
 BASE_URL = "https://models.sjtu.edu.cn/api/v1"
 MODELS = ["qwen", "deepseek-chat", "deepseek-reasoner"]  # first is the default; qwen writes ~2x faster
 MAX_STEPS = 5
+# The API sometimes hangs a request without answering; a retry then answers in seconds.
+# A normal first token takes 3-8 s, so give up on a silent request after this long.
+READ_TIMEOUT = 45
+MAX_ATTEMPTS = 3  # every attempt counts against the API's 10 requests/minute
 
 SYSTEM_PROMPT = """You are a maritime transport risk analyst agent. You help shipping, port and \
 logistics planners assess geopolitical shocks to international transport corridors (canal or strait \
@@ -63,11 +70,14 @@ BASELINE_PROMPT = """You are a maritime transport risk analyst. Answer the user'
 geopolitical shocks to shipping routes as well as you can, with concrete figures where possible."""
 
 
+@functools.lru_cache(maxsize=1)  # one client (and connection pool) for all turns
 def make_client():
     key = os.environ.get("SJTU_API_KEY")
     if not key:
         raise RuntimeError("SJTU_API_KEY not set (put it in .env)")
-    return OpenAI(base_url=BASE_URL, api_key=key, max_retries=5, timeout=120)
+    # Retries are done in _stream_completion, so the UI can show them.
+    return OpenAI(base_url=BASE_URL, api_key=key, max_retries=0,
+                  timeout=openai.Timeout(READ_TIMEOUT, connect=10))
 
 
 def _strip_private(result):
@@ -76,13 +86,41 @@ def _strip_private(result):
     return result
 
 
+def _retry_wait(err):
+    """Seconds to wait before retrying after err, or None if it isn't worth retrying."""
+    if isinstance(err, openai.RateLimitError):
+        try:
+            return min(float(err.response.headers.get("retry-after", 20)), 60)
+        except ValueError:
+            return 20
+    if isinstance(err, (openai.APIConnectionError, openai.InternalServerError)):  # incl. timeouts
+        return 2
+    return None
+
+
 def _stream_completion(client, kwargs, emit):
     """Streamed chat completion. Emits {"type": "delta", "text"} for each piece of
-    content so UIs can show the answer as it is written.
+    content so UIs can show the answer as it is written, and {"type": "retry",
+    "reason", "wait"} when a request fails before anything was streamed.
     Returns (content, tool_calls as [{"id", "name", "arguments"}], usage or None)."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        content = []
+        try:
+            return _read_stream(client, kwargs, emit, content)
+        except openai.APIError as e:
+            wait = _retry_wait(e)
+            if content or wait is None or attempt == MAX_ATTEMPTS:
+                raise
+            reason = "rate limit (10 requests/min)" if isinstance(e, openai.RateLimitError) \
+                else f"no reply from the model API ({type(e).__name__})"
+            emit({"type": "retry", "reason": reason, "wait": wait, "attempt": attempt + 1})
+            time.sleep(wait)
+
+
+def _read_stream(client, kwargs, emit, content):
     stream = client.chat.completions.create(**kwargs, stream=True,
                                             stream_options={"include_usage": True})
-    content, calls, usage = [], {}, None
+    calls, usage = {}, None
     for chunk in stream:
         if chunk.usage:
             usage = chunk.usage
@@ -112,6 +150,12 @@ def run_tool(name, args):
         return {"error": f"Bad arguments: {e}"}
     except Exception as e:  # network errors etc. go back to the model
         return {"error": f"{type(e).__name__}: {e}"}
+
+
+def _timed_tool(name, args):
+    t0 = time.time()
+    result = run_tool(name, args)
+    return result, round(time.time() - t0, 2)
 
 
 def run_agent(history, model=MODELS[0], use_tools=True, on_event=None, client=None):
@@ -159,18 +203,24 @@ def run_agent(history, model=MODELS[0], use_tools=True, on_event=None, client=No
                             "function": {"name": tc["name"], "arguments": tc["arguments"]}}
                            for tc in tool_calls],
         })
+        calls = []
         for tc in tool_calls:
             try:
                 args = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-            t1 = time.time()
-            result = run_tool(tc["name"], args)
-            ev = {"type": "tool", "step": step, "name": tc["name"], "args": args,
-                  "result": result, "seconds": round(time.time() - t1, 2)}
-            trace.append(ev)
-            emit(ev)
-            messages.append({"role": "tool", "tool_call_id": tc["id"],
-                             "content": json.dumps(_strip_private(result), ensure_ascii=False)})
+            calls.append((tc, args))
+        # Tools of one step are independent and mostly wait on the network: run them at once.
+        # Events are emitted from this thread, since UIs (Streamlit) can't be updated from workers.
+        with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+            futures = [pool.submit(_timed_tool, tc["name"], args) for tc, args in calls]
+            for (tc, args), fut in zip(calls, futures):
+                result, seconds = fut.result()
+                ev = {"type": "tool", "step": step, "name": tc["name"], "args": args,
+                      "result": result, "seconds": seconds}
+                trace.append(ev)
+                emit(ev)
+                messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                 "content": json.dumps(_strip_private(result), ensure_ascii=False)})
 
     return {"answer": "Stopped: reached the maximum number of tool steps.", "trace": trace, "usage": usage}

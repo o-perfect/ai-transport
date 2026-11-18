@@ -18,6 +18,8 @@ def show(ev):
         args = json.dumps(ev["args"], ensure_ascii=False)
         status = "ERROR " + ev["result"]["error"] if "error" in ev["result"] else "ok"
         print(f"  [tool] {ev['name']}({args}) -> {status} ({ev['seconds']}s)")
+    elif ev["type"] == "retry":
+        print(f"  [retry] {ev['reason']}, waiting {ev['wait']:.0f}s")
     elif ev["type"] == "thought":
         print()  # the thought was already streamed above
 

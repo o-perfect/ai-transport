@@ -9,6 +9,7 @@ import hashlib
 import json
 import pathlib
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
 
 import requests
@@ -21,6 +22,11 @@ PORTWATCH = "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/arcgis/rest/services"
 GOOGLE_NEWS = "https://news.google.com/rss/search"
 MARITIME_SITE = "gcaptain.com"  # maritime trade press, searched through Google News
 CACHE_DIR = pathlib.Path(__file__).resolve().parent.parent / ".cache"
+
+# One keep-alive session for all tools: over a long-distance VPN a new TLS
+# handshake costs 1-3 s, so reusing connections matters more than anything else.
+SESSION = requests.Session()
+SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_maxsize=16))
 
 PORTWATCH_CHOKEPOINTS = {
     "Suez Canal": "chokepoint1", "Panama Canal": "chokepoint2", "Bosporus Strait": "chokepoint3",
@@ -49,9 +55,9 @@ def _portwatch_query(layer, params):
                        .replace(" ", "").replace("'", "").replace("/", "")[:180] + ".json")
     if key.exists() and dt.datetime.now().timestamp() - key.stat().st_mtime < 6 * 3600:
         return json.loads(key.read_text())
-    r = requests.get(f"{PORTWATCH}/{layer}/FeatureServer/0/query",
-                     params={"f": "json", "returnGeometry": "false", "outFields": "*", **params},
-                     timeout=30)
+    r = SESSION.get(f"{PORTWATCH}/{layer}/FeatureServer/0/query",
+                    params={"f": "json", "returnGeometry": "false", "outFields": "*", **params},
+                    timeout=30)
     r.raise_for_status()
     rows = [f["attributes"] for f in r.json().get("features", [])]
     key.write_text(json.dumps(rows))
@@ -84,17 +90,17 @@ def get_chokepoint_traffic(chokepoint, days=30):
         return {"error": "No data returned from PortWatch"}
     end = dt.date.fromisoformat(latest[0]["date"])
     start = end - dt.timedelta(days=days - 1)
-    recent = _daily(pid, start, end)
 
     def same_window(year):
         try:
             s, e = start.replace(year=year - (end.year - start.year)), end.replace(year=year)
         except ValueError:  # 29 Feb
             s, e = start - dt.timedelta(days=365), end - dt.timedelta(days=365)
-        return _daily(pid, s, e)
+        return s, e
 
-    last_year = same_window(end.year - 1)
-    pre_crisis = same_window(2023)
+    windows = [(start, end), same_window(end.year - 1), same_window(2023)]
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        recent, last_year, pre_crisis = pool.map(lambda w: _daily(pid, *w), windows)
 
     def pct(a, b):
         return None if not a or not b else round(100 * (a - b) / b, 1)
@@ -242,8 +248,8 @@ def _news_search(q):
     key = CACHE_DIR / f"news_{hashlib.md5(q.encode()).hexdigest()}.xml"
     if not key.exists() or dt.datetime.now().timestamp() - key.stat().st_mtime > 1800:
         try:
-            r = requests.get(GOOGLE_NEWS, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
-                             headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            r = SESSION.get(GOOGLE_NEWS, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
             r.raise_for_status()
             key.write_bytes(r.content)
         except requests.RequestException:
@@ -262,8 +268,10 @@ def _news_search(q):
 def get_news(query, days=7):
     """Recent headlines for a query from maritime trade press (gCaptain) and general news."""
     days = max(1, min(int(days), 30))
-    maritime = _news_search(f"{query} site:{MARITIME_SITE} when:{days}d")
-    general = [i for i in _news_search(f"{query} when:{days}d") if i["source"] != "gCaptain"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        maritime, general = pool.map(_news_search, [f"{query} site:{MARITIME_SITE} when:{days}d",
+                                                    f"{query} when:{days}d"])
+    general = [i for i in general if i["source"] != "gCaptain"]
     return {"query": query, "days": days, "maritime": maritime[:6], "general": general[:8],
             "_items": maritime + general}
 
