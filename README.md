@@ -69,7 +69,7 @@ chat_cli.py            Terminal chat for quick testing
   Dover) can't be blocked by the agent and come back as `unrecognised_blocked`.
   Alternatives are found by re-routing with each passage the route uses blocked.
 - LLM API: `https://models.sjtu.edu.cn/api/v1`, models `qwen` (default, fastest),
-  `deepseek-chat`, `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
+  `deepseek-chat`, `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 3-5 requests (capped at 5).
 - PortWatch responses are cached for 6 h in `.cache/`.
 - News comes from Google News RSS search (no key): gCaptain for maritime trade press
   (`site:gcaptain.com`) plus general news. Cached for 30 min in `.cache/`.

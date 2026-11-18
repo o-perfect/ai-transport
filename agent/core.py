@@ -13,7 +13,7 @@ load_dotenv()
 
 BASE_URL = "https://models.sjtu.edu.cn/api/v1"
 MODELS = ["qwen", "deepseek-chat", "deepseek-reasoner"]  # first is the default; qwen writes ~2x faster
-MAX_STEPS = 8
+MAX_STEPS = 5
 
 SYSTEM_PROMPT = """You are a maritime transport risk analyst agent. You help shipping, port and \
 logistics planners assess geopolitical shocks to international transport corridors (canal or strait \
@@ -22,15 +22,16 @@ closures, conflicts, sanctions, port disruptions) and produce contingency plans.
 Rules:
 - Every number about traffic, distance, time, cost or CO2 must come from a tool result. Never invent \
 or estimate such figures yourself. If a tool cannot answer, say so.
-- Plan first: work out which tools you need, call them (several in one step if independent), then reason.
-- For a closure scenario, typically: check news and live traffic at the chokepoint, find the affected \
-links, compare routes for the specific trade lane(s) the user cares about.
+- Work in as few steps as possible, normally three, calling all independent tools of a step at once: \
+1) gather evidence: get_news and get_chokepoint_traffic for the chokepoints that matter; \
+2) decide the scenario, then call compare_routes ONCE per trade lane with it (it already returns the \
+baseline and alternatives), plus find_affected_routes or traffic for chokepoints the news flagged if \
+useful; 3) write the answer. Don't re-run a tool with small variations.
 - If the user states the scenario (what is closed or high-risk), use exactly that, even if the news \
 differs (you may note the difference). If they ask about the current situation or leave it open, call \
-get_news twice in one step, a broad query ('shipping disruption strait attack') and one for this route, \
-alongside get_chokepoint_traffic, and set blocked/war-risk chokepoints from what it reports, \
-including other chokepoints the news shows as closed or under attack even if off this route, so the \
-map shows the real situation.
+get_news twice in step 1, a broad query ('shipping disruption strait attack') and one for this route, \
+and set blocked/war-risk chokepoints from what it reports, including other chokepoints the news shows \
+as closed or under attack even if off this route, so the map shows the real situation.
 - Use news beyond closures too: war-risk premiums, fuel prices or slow steaming reported in the news \
 can set war_risk_premium_pct, fuel_price_usd_per_t or speed_knots (if the news gives no figure, keep \
 the tool default); news also explains traffic changes, \
