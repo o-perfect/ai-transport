@@ -246,14 +246,19 @@ def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=
 
 
 def _news_search(q):
-    """Google News RSS search, newest first. Cached for 30 min."""
+    """Google News RSS search, newest first. Cached for 30 min; an older copy is
+    used if the request fails (e.g. 429 rate limit)."""
     CACHE_DIR.mkdir(exist_ok=True)
     key = CACHE_DIR / f"news_{hashlib.md5(q.encode()).hexdigest()}.xml"
     if not key.exists() or dt.datetime.now().timestamp() - key.stat().st_mtime > 1800:
-        r = requests.get(GOOGLE_NEWS, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
-                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        r.raise_for_status()
-        key.write_bytes(r.content)
+        try:
+            r = requests.get(GOOGLE_NEWS, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                             headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            r.raise_for_status()
+            key.write_bytes(r.content)
+        except requests.RequestException:
+            if not key.exists():
+                raise  # nothing cached to fall back on
     items = []
     for it in ET.fromstring(key.read_bytes()).iter("item"):
         source = it.findtext("source", "")
