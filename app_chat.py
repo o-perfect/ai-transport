@@ -62,7 +62,7 @@ def render_charts(tools):
             st.markdown(f"**{r['origin']} → {r['destination']}**, blocked: {', '.join(r['blocked']) or 'none'}")
             st.dataframe(df, hide_index=True)
             st.bar_chart(df.set_index("route")[["fuel_usd", "charter_time_usd", "canal_tolls_usd",
-                                                "war_risk_insurance_usd"]], horizontal=True)
+                                                "war_risk_insurance_usd", "eu_ets_usd"]], horizontal=True)
         elif e["name"] == "find_affected_routes" and r.get("affected"):
             df = pd.DataFrame(r.get("_all_affected", r["affected"]))
             st.markdown(f"**Links through {r['chokepoint']}**: {r['links_affected']} of {r['links_total']}")

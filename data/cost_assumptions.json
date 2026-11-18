@@ -1,0 +1,29 @@
+{
+  "fuel_price_usd_per_t": 750,
+  "co2_t_per_t_fuel": 3.151,
+  "canals": {
+    "Suez Canal":   {"base_toll_usd": 700000, "waiting_days": 1.0},
+    "Panama Canal": {"base_toll_usd": 600000, "waiting_days": 1.5}
+  },
+  "war_risk_premium_pct": {
+    "Bab el-Mandeb Strait": 1.0,
+    "Strait of Hormuz": 3.0,
+    "Bosporus Strait": 0.1
+  },
+  "war_risk_premium_pct_default": 0.7,
+  "eu_ets": {
+    "usd_per_t_co2": 100,
+    "share_both_ports_eu": 1.0,
+    "share_one_port_eu": 0.5
+  },
+  "sources": {
+    "as_of": "2026-11-18",
+    "fuel_price_usd_per_t": "VLSFO, 13 Nov 2026: Rotterdam ~720-745 USD/t, Singapore ~820-880 USD/t (Ship & Bunker, OilPriceAPI). Prices fell ~20% in early November, so this moves fast.",
+    "co2_t_per_t_fuel": "IMO default CO2 factor for low-sulphur fuel oil.",
+    "canals.base_toll_usd": "Toll for a reference ship, multiplied by the ship's toll_factor (data/ships.json). Suez: ~0.8-1.2M USD for a 15,000 TEU ship; the SCA's 15% rebate for large container ships ended on 7 Apr 2026. Panama: 2025 tariff ~300k USD fixed + 35-45 USD/TEU. Rough estimates, not official tariffs.",
+    "canals.waiting_days": "Planning assumption for queueing and transit time; it is charged as extra charter days.",
+    "war_risk_premium_pct": "% of hull value per transit. Charged for these chokepoints on every route that passes them (current market), plus any chokepoint the agent flags as high-risk (at the default rate). July 2026: Bab el-Mandeb 0.5-2%, Hormuz 3-10% (0.25% before the conflict) (Al Jazeera, Reuters).",
+    "eu_ets": "Since 2026, 100% of CO2 is covered for voyages between two EU ports and 50% for voyages to or from the EU. EUA ~87 EUR/t (Nov 2026), converted at ~1.15 USD/EUR.",
+    "ships.json": "Container charter rates are based on HARPEX, Sep 2026 (2,500 TEU ~37k, 4,250 TEU ~59k USD/day). Other ship figures are rough planning values for a school project."
+  }
+}

@@ -139,6 +139,25 @@ def port_coords(port):
     return PORTS.get(port) or _world_ports()[0][port]
 
 
+HUB_COUNTRIES = {
+    "Shanghai": "CN", "Shenzhen": "CN", "Hong Kong": "HK", "Busan": "KR", "Tokyo": "JP",
+    "Singapore": "SG", "Colombo": "LK", "Mumbai": "IN", "Jebel Ali": "AE", "Ras Tanura": "SA",
+    "Jeddah": "SA", "Piraeus": "GR", "Constanta": "RO", "Genoa": "IT", "Rotterdam": "NL",
+    "Hamburg": "DE", "Durban": "ZA", "Lagos": "NG", "Santos": "BR", "New York": "US",
+    "Houston": "US", "Los Angeles": "US",
+}
+
+
+def port_country(port):
+    """ISO alpha-2 country code of a resolved port: the hub table, or the first two
+    letters of the UN/LOCODE in a world port label "Name, Country (LOCODE)"."""
+    if port in HUB_COUNTRIES:
+        return HUB_COUNTRIES[port]
+    if port.endswith(")") and "(" in port:
+        return port[port.rindex("(") + 1:port.rindex("(") + 3].upper()
+    return ""
+
+
 @lru_cache(maxsize=1)
 def _network():
     """searoute's network with two fixes so blocked passages really are blocked:

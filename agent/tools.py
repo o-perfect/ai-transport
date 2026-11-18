@@ -13,6 +13,8 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
+from core import costs
+
 from . import network as net
 
 PORTWATCH = "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/arcgis/rest/services"
@@ -34,23 +36,11 @@ PORTWATCH_CHOKEPOINTS = {
     "Mindoro Strait": "chokepoint27", "Kerch Strait": "chokepoint28",
 }
 
-# Indicative vessel profiles. All figures are planning assumptions, not quotes.
-# fuel_t_day is consumption at ref_knots; it scales with (speed/ref)^3.
-VESSELS = {
-    "container_large": dict(desc="~14,000 TEU container ship", fuel_t_day=80, ref_knots=16,
-                            charter_usd_day=60_000, hull_value_usd=150e6,
-                            tolls={"Suez Canal": 500_000, "Panama Canal": 450_000}, no_go=[]),
-    "container_medium": dict(desc="~8,000 TEU container ship", fuel_t_day=60, ref_knots=16,
-                             charter_usd_day=40_000, hull_value_usd=90e6,
-                             tolls={"Suez Canal": 330_000, "Panama Canal": 300_000}, no_go=[]),
-    "tanker_suezmax": dict(desc="Suezmax crude tanker (~1M bbl)", fuel_t_day=50, ref_knots=13,
-                           charter_usd_day=45_000, hull_value_usd=80e6,
-                           tolls={"Suez Canal": 350_000}, no_go=["Panama Canal"]),
-    "bulk_capesize": dict(desc="Capesize dry bulk carrier (~180,000 dwt)", fuel_t_day=45, ref_knots=13,
-                          charter_usd_day=25_000, hull_value_usd=60e6,
-                          tolls={"Suez Canal": 300_000}, no_go=["Panama Canal"]),
-}
-CO2_PER_T_FUEL = 3.151  # t CO2 per t VLSFO (IMO default factor)
+# Ship types and all cost figures live in core/costs.py (data/ships.json,
+# data/cost_assumptions.json); the tools below never compute a cost themselves.
+SHIPS = costs.ship_types()
+DEFAULT_SHIP = "ulcv"
+PASSAGES = {name: passage for name, (passage, _) in net.CHOKEPOINTS.items()}
 
 
 def _portwatch_query(layer, params):
@@ -126,22 +116,17 @@ def get_chokepoint_traffic(chokepoint, days=30):
     }
 
 
-def _route_cost(r, vessel, speed_knots, fuel_price, war_risk, war_risk_pct):
-    nm, chokes = r["distance_nm"], r["chokepoints"]
-    days = nm / (speed_knots * 24)
-    fuel_t = days * vessel["fuel_t_day"] * (speed_knots / vessel["ref_knots"]) ** 3
-    tolls = sum(vessel["tolls"].get(c, 0) for c in chokes)
-    risky = [c for c in chokes if c in war_risk]
-    insurance = vessel["hull_value_usd"] * war_risk_pct / 100 if risky else 0
-    fuel_cost = fuel_t * fuel_price
-    charter = days * vessel["charter_usd_day"]
+def _route_cost(r, ship, speed_knots, fuel_price, war_risk, war_risk_pct, ets_share):
+    c = costs.voyage_cost(r["distance_nm"], r["chokepoints"], ship, speed_knots=speed_knots,
+                          fuel_price_usd_per_t=fuel_price, flagged_war_risk=tuple(war_risk),
+                          war_risk_premium_pct=war_risk_pct, ets_share=ets_share)
     return {
-        "distance_nm": round(nm), "sea_days": round(days, 1), "chokepoints": chokes,
-        "war_risk_areas_transited": risky,
-        "cost_usd": {"fuel": round(fuel_cost), "charter_time": round(charter), "canal_tolls": tolls,
-                     "war_risk_insurance": round(insurance),
-                     "total": round(fuel_cost + charter + tolls + insurance)},
-        "fuel_t": round(fuel_t), "co2_t": round(fuel_t * CO2_PER_T_FUEL),
+        "distance_nm": round(r["distance_nm"]), "sea_days": round(c.sea_days, 1),
+        "canal_waiting_days": c.canal_waiting_days, "chokepoints": r["chokepoints"],
+        "war_risk_areas_transited": c.war_risk_chokepoints,
+        "cost_usd": c.cost_usd(),
+        "cost_per_unit": {"usd": round(c.per_unit, 1), "unit": c.per_unit_label},
+        "fuel_t": round(c.fuel_t), "co2_t": round(c.co2_t),
         "path": r["path"],
     }
 
@@ -154,28 +139,30 @@ def _feature(r, costs, role, label):
                            "chokepoints": r["chokepoints"]}}
 
 
-def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="container_large",
-                   speed_knots=14.0, fuel_price_usd_per_t=600.0, war_risk_chokepoints=(),
-                   war_risk_premium_pct=0.7):
+def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type=DEFAULT_SHIP,
+                   speed_knots=None, fuel_price_usd_per_t=None, war_risk_chokepoints=(),
+                   war_risk_premium_pct=None):
     """Baseline route vs. best alternatives when chokepoints are blocked, with
-    distance, sea time, voyage cost (fuel, charter, tolls, war-risk cover) and CO2."""
+    distance, sea time and voyage cost from core/costs.py (fuel, charter, tolls,
+    war-risk cover, EU ETS) and CO2."""
     o, d = net.resolve_port(origin), net.resolve_port(destination)
     bad = [x for x, r in ((origin, o), (destination, d)) if r is None]
     if bad:
         return {"error": f"Unknown port(s) {bad}. Closest matches: "
                          f"{ {x: net.suggest_ports(x) for x in bad} }. Use a port name, "
                          "'Name, Country' or a UN/LOCODE."}
-    if vessel_type not in VESSELS:
-        return {"error": f"Unknown vessel_type. Options: {list(VESSELS)}"}
-    vessel = VESSELS[vessel_type]
+    if vessel_type not in SHIPS:
+        return {"error": f"Unknown vessel_type. Options: {list(SHIPS)}"}
+    ship = SHIPS[vessel_type]
     blocked = [net.resolve(c) for c in blocked_chokepoints if net.resolve(c) in net.CHOKEPOINTS]
     unknown = [c for c in blocked_chokepoints if net.resolve(c) not in net.CHOKEPOINTS]
     war_risk = [net.resolve(c) for c in war_risk_chokepoints if net.resolve(c)]
-    restricted = vessel["no_go"]
+    restricted = costs.too_big_for(ship, PASSAGES)
+    ets_share = costs.eu_ets_share(net.port_country(o), net.port_country(d))
 
     def costed(r):
-        return _route_cost(r, vessel, speed_knots, fuel_price_usd_per_t, war_risk,
-                           war_risk_premium_pct)
+        return _route_cost(r, ship, speed_knots, fuel_price_usd_per_t, war_risk,
+                           war_risk_premium_pct, ets_share)
 
     base = net.route(o, d, restricted)
     if base is None:
@@ -190,33 +177,36 @@ def compare_routes(origin, destination, blocked_chokepoints=(), vessel_type="con
             "cost_usd": a["cost_usd"]["total"] - baseline["cost_usd"]["total"],
             "co2_t": a["co2_t"] - baseline["co2_t"],
         }
+    charged_war_risk = sorted({c for r in (baseline, *alts) for c in r["war_risk_areas_transited"]})
     return {
         "origin": o, "destination": d, "blocked": blocked, "unrecognised_blocked": unknown,
-        "vessel": f"{vessel_type}: {vessel['desc']}", "vessel_cannot_use": restricted,
-        "assumptions": {"speed_knots": speed_knots, "fuel_price_usd_per_t": fuel_price_usd_per_t,
-                        "charter_usd_day": vessel["charter_usd_day"],
-                        "war_risk_premium_pct_of_hull": war_risk_premium_pct if war_risk else None,
-                        "note": "Sea time only; excludes port time, canal queues and cargo inventory cost."},
+        "vessel": f"{vessel_type}: {ship.name}", "vessel_cannot_use": restricted,
+        "eu_ets_share_of_co2": ets_share,
+        "assumptions": costs.assumptions_used(ship, speed_knots, fuel_price_usd_per_t,
+                                              war_risk_premium_pct),
         "baseline_route": baseline,
         "alternatives": alts if alts else "No feasible route with these blockages",
         "_geometry": {"type": "FeatureCollection", "features": [
             _feature(base, baseline, "baseline", "Baseline: " + (" / ".join(base["chokepoints"]) or "open sea")),
             *(_feature(r, a, "alternative", f"Alt {i}: " + (" / ".join(r["chokepoints"]) or "open sea"))
               for i, (r, a) in enumerate(zip(alt_routes, alts), 1))],
-            "scenario": {"blocked": blocked, "war_risk": war_risk, "vessel_cannot_use": restricted}},
+            "scenario": {"blocked": blocked, "war_risk": sorted({*war_risk, *charged_war_risk}),
+                         "vessel_cannot_use": restricted}},
     }
 
 
 AFFECTED_SHOWN = 15  # the full list is long and slows the LLM down; the UI gets all of it
 
 
-def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=14.0):
+def find_affected_routes(chokepoint, vessel_type=DEFAULT_SHIP, speed_knots=None):
     """Which port-to-port links in the network depend on a chokepoint, and how
     much distance/time each loses if it is closed. Sorted by extra sea days."""
     c = net.resolve(chokepoint)
     if c not in net.CHOKEPOINTS:
         return {"error": f"'{chokepoint}' is not in the routing network. Options: {list(net.CHOKEPOINTS)}"}
-    no_go = tuple(VESSELS.get(vessel_type, VESSELS["container_large"])["no_go"])
+    ship = SHIPS.get(vessel_type, SHIPS[DEFAULT_SHIP])
+    speed_knots = speed_knots or ship.service_speed_kn
+    no_go = tuple(costs.too_big_for(ship, PASSAGES))
     rows = []
     ports = list(net.PORTS)
     for i, a in enumerate(ports):
@@ -284,6 +274,10 @@ _port_param = {"type": "string",
                "description": "Any world port: a name (e.g. 'Sydney'), 'Name, Country' to disambiguate, "
                               "or a UN/LOCODE (e.g. 'AUSYD'). Main hubs: " + ", ".join(net.PORTS)}
 _choke_enum = list(net.CHOKEPOINTS)
+_vessel_param = {"type": "string", "enum": list(SHIPS), "default": DEFAULT_SHIP,
+                 "description": "Ship type: " + "; ".join(f"{s.id} = {s.name}" for s in SHIPS.values())
+                                + ". Pick the one that fits the cargo (containers, dry bulk, crude, LNG)."}
+_speed_param = {"type": "number", "description": "Speed in knots. Omit to use the ship's service speed."}
 
 SCHEMAS = [
     {"type": "function", "function": {
@@ -298,22 +292,25 @@ SCHEMAS = [
     {"type": "function", "function": {
         "name": "compare_routes",
         "description": "Compute the normal (baseline) sea route between two ports and up to 3 alternative routes "
-                       "when chokepoints are blocked. Returns distance, sea days, voyage cost breakdown "
-                       "(fuel, charter time, canal tolls, war-risk insurance), CO2, and the extra vs. baseline. "
-                       "Use war_risk_chokepoints to price passing a dangerous-but-open chokepoint instead of "
-                       "blocking it.",
+                       "when chokepoints are blocked. Returns distance, sea days, canal waiting days, voyage cost "
+                       "breakdown (fuel, charter time, canal tolls, war-risk insurance, EU ETS carbon cost), cost "
+                       "per TEU or per tonne, CO2, the extra vs. baseline, and the cost assumptions with sources. "
+                       "Chokepoints with a current war-risk premium (e.g. Bab el-Mandeb, Hormuz) are always "
+                       "charged; use war_risk_chokepoints to also price other dangerous-but-open chokepoints.",
         "parameters": {"type": "object", "properties": {
             "origin": _port_param,
             "destination": _port_param,
             "blocked_chokepoints": {"type": "array", "items": {"type": "string", "enum": _choke_enum},
                                     "description": "Chokepoints that are closed"},
-            "vessel_type": {"type": "string", "enum": list(VESSELS), "default": "container_large"},
-            "speed_knots": {"type": "number", "default": 14},
-            "fuel_price_usd_per_t": {"type": "number", "default": 600},
+            "vessel_type": _vessel_param,
+            "speed_knots": _speed_param,
+            "fuel_price_usd_per_t": {"type": "number",
+                                     "description": "Omit to use the current assumption (VLSFO)"},
             "war_risk_chokepoints": {"type": "array", "items": {"type": "string", "enum": _choke_enum},
-                                     "description": "Open but high-risk chokepoints that trigger a war-risk premium"},
-            "war_risk_premium_pct": {"type": "number", "default": 0.7,
-                                     "description": "War-risk premium, % of hull value per voyage"},
+                                     "description": "Extra open but high-risk chokepoints that trigger a war-risk premium"},
+            "war_risk_premium_pct": {"type": "number",
+                                     "description": "Overrides the war-risk premium (% of hull value per transit) "
+                                                    "for every charged chokepoint. Omit to use the defaults."},
         }, "required": ["origin", "destination"]}}},
     {"type": "function", "function": {
         "name": "find_affected_routes",
@@ -322,8 +319,8 @@ SCHEMAS = [
                        "closes (worst links first).",
         "parameters": {"type": "object", "properties": {
             "chokepoint": {"type": "string", "enum": _choke_enum},
-            "vessel_type": {"type": "string", "enum": list(VESSELS), "default": "container_large"},
-            "speed_knots": {"type": "number", "default": 14},
+            "vessel_type": _vessel_param,
+            "speed_knots": _speed_param,
         }, "required": ["chokepoint"]}}},
     {"type": "function", "function": {
         "name": "get_news",

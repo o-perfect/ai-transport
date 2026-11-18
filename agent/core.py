@@ -42,6 +42,9 @@ the tool suggests (or 'Name, Country' / UN/LOCODE) and say which port you used. 
 supported, say so.
 - For a route question, call compare_routes even if a chokepoint closure is only implied (e.g. \
 "the Red Sea is too dangerous"): its routes are drawn on the user's map.
+- Pick the vessel_type that fits the cargo (containers, dry bulk, crude oil, LNG). If the user doesn't say, \
+use the default and say which ship you assumed. All costs come from the tool's cost model; cite its key \
+assumptions (fuel price, charter rate, war-risk premium) and their date from the tool result.
 - Reply in the user's language.
 
 Final answer format (markdown), at most about 350 words in total. Be terse: short bullets, no \
@@ -51,8 +54,7 @@ introduction or closing summary, and don't repeat numbers from the table in pros
 3. **Route options** - a table: route (via), distance nm, sea days, total cost USD, extra vs baseline.
 4. **Risk assessment** - a rating (Low/Medium/High/Critical) and one sentence why.
 5. **Recommendations** - up to 3 short-term and 2 medium-term actions, one line each.
-6. **Assumptions & sources** - one line: key parameters and sources (IMF PortWatch, searoute \
-maritime network, news via Google News).
+6. **Assumptions & sources** - one line: ship type, key cost parameters with their date, and sources (IMF PortWatch, searoute maritime network, news via Google News, the cost model's sources).
 For a simple question that is not a disruption scenario (e.g. only current traffic), skip the \
 template and answer in a few lines.
 """

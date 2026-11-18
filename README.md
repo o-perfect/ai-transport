@@ -41,11 +41,13 @@ core/ports.py          ~3,900 world ports (bundled with the searoute package)
 core/ships.py          Ship types + attributes; ShipType.to_features() for ML
 core/chokepoints.py    Chokepoint registry: open/close, risk, add custom ones
 core/routing.py        Sea routing (searoute network) avoiding closed chokepoints
-core/costs.py          Fuel, time, tolls, war-risk insurance, risk score
+core/costs.py          Voyage cost model used by the agent (fuel, charter time, tolls,
+                       war-risk insurance, EU ETS)
 data/chokepoints.json  Chokepoint state (the "switches")
-data/ships.json        Ship type definitions
-                       (core/ is the earlier route planner's logic; the UI no longer uses it
-                       apart from core/ports.py, but it is kept as a library)
+data/ships.json        The 8 ship types the agent can choose from
+data/cost_assumptions.json  Fuel price, canal tolls, war-risk premiums, EU ETS, with sources
+                       (core/routing.py and core/chokepoints.py are the earlier route planner's
+                       logic; the agent uses core/costs.py, core/ships.py and core/ports.py)
 
 agent/core.py          Agent loop, system prompt, task understanding, report format
 agent/tools.py         Tools: live PortWatch traffic, news, route + cost comparison, affected links
@@ -60,9 +62,11 @@ chat_cli.py            Terminal chat for quick testing
   every network edge inside their radius.
 - Ship size limits apply automatically. For example, a VLCC is too deep for
   Suez and a 400 m container ship is too long for Panama.
-- Costs are a simple, transparent model: fuel ∝ speed³, tolls × ship size
-  factor, war-risk premium = % of hull value per risky chokepoint. All numbers
-  are rough placeholders for a school project, not market data.
+- Costs are hard-coded in `core/costs.py`; the LLM never calculates them. Per voyage:
+  fuel (∝ speed³) + charter time (sea days + canal waiting days) + canal tolls
+  (base toll × ship's toll factor) + war-risk insurance (% of hull value per risky
+  chokepoint) + EU ETS (CO2 × 100% / 50% / 0% EU share × carbon price). Port fees are
+  left out because they are equal on every route between the same two ports.
 - The agent routes on the same `searoute` network. Its chokepoints are the IMF PortWatch
   chokepoints that have a searoute passage (Suez, Panama, Bosporus, Bab el-Mandeb,
   Malacca, Hormuz, Cape of Good Hope, Gibraltar, Sunda, Bering). Others (e.g. Taiwan,
@@ -73,5 +77,6 @@ chat_cli.py            Terminal chat for quick testing
 - PortWatch responses are cached for 6 h in `.cache/`.
 - News comes from Google News RSS search (no key): gCaptain for maritime trade press
   (`site:gcaptain.com`) plus general news. Cached for 30 min in `.cache/`.
-- Agent cost figures (fuel burn, charter rates, canal tolls, war-risk premium) are
-  planning assumptions in `agent/tools.py::VESSELS`; cite them as such in the report.
+- Cost figures are planning assumptions in `data/ships.json` and
+  `data/cost_assumptions.json` (with sources and date, Nov 2026); the agent cites them.
+  Ship size limits come from `data/chokepoints.json` (e.g. a VLCC is too deep for Suez).
