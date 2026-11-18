@@ -19,7 +19,7 @@ st.set_page_config(page_title="Corridor Risk Agent", page_icon="🚢", layout="w
 ROUTE_COLORS = ["#1a73e8", "#9334e6", "#e52592", "#12b5cb"]  # baseline, alt 1, alt 2, alt 3
 CLOSED_RED = "#d93025"
 WAR_RISK_ORANGE = "#e8710a"
-OPEN_GREY = "#7a7f87"
+NEUTRAL_GREY = "#7a7f87"
 
 
 def money(x: float) -> str:
@@ -35,7 +35,7 @@ def chokepoint_status(name, scenario):
         return "Too small for this vessel", CLOSED_RED
     if name in scenario.get("war_risk", []):
         return "Open, war risk", WAR_RISK_ORANGE
-    return "Open", OPEN_GREY
+    return "Not assessed in this scenario", NEUTRAL_GREY
 
 
 def route_map(routes) -> folium.Map:
@@ -108,7 +108,7 @@ with left:
     features = routes.get("features", [])
     st_folium(route_map(routes), height=560, use_container_width=True, returned_objects=[])
     st.caption("Routes: 🔵 dashed = baseline (normal route), 🟣 🩷 🩵 = alternatives.   "
-               "Chokepoints: ⚪ open, 🟠 war risk, 🔴 closed.")
+               "Chokepoints: ⚪ not assessed, 🟠 war risk, 🔴 closed.")
     if features:
         first = features[0]["properties"]
         c1, c2 = st.columns([4, 1], vertical_alignment="center")

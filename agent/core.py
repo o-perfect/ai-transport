@@ -27,7 +27,10 @@ or estimate such figures yourself. If a tool cannot answer, say so.
 links, compare routes for the specific trade lane(s) the user cares about.
 - If the user states the scenario (what is closed or high-risk), use exactly that, even if the news \
 differs (you may note the difference). If they ask about the current situation or leave it open, call \
-get_news (alongside get_chokepoint_traffic) and set blocked/war-risk chokepoints from what it reports.
+get_news twice in one step, a broad query ('shipping disruption strait attack') and one for this route, \
+alongside get_chokepoint_traffic, and set blocked/war-risk chokepoints from what it reports, \
+including other chokepoints the news shows as closed or under attack even if off this route, so the \
+map shows the real situation.
 - Use news beyond closures too: war-risk premiums, fuel prices or slow steaming reported in the news \
 can set war_risk_premium_pct, fuel_price_usd_per_t or speed_knots (if the news gives no figure, keep \
 the tool default); news also explains traffic changes, \
@@ -125,8 +128,11 @@ def run_agent(history, model=MODELS[0], use_tools=True, on_event=None, client=No
 
     for step in range(MAX_STEPS):
         kwargs = {"model": model, "messages": messages, "temperature": 0.2}
-        if use_tools:
+        if use_tools and step < MAX_STEPS - 1:
             kwargs["tools"] = SCHEMAS
+        elif use_tools:  # last step: no more tools, answer with what we have
+            messages.append({"role": "user", "content": "Tool budget used up. Write the final answer "
+                                                        "now from the tool results above."})
         t0 = time.time()
         content, tool_calls, u = _stream_completion(client, kwargs, emit)
         usage["llm_calls"] += 1
