@@ -6,8 +6,9 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from dotenv import load_dotenv
+import httpx2  # openai's HTTP client
 import openai
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from .tools import FUNCTIONS, SCHEMAS
@@ -19,7 +20,7 @@ MODELS = ["qwen", "deepseek-chat", "deepseek-reasoner"]  # first is the default;
 MAX_STEPS = 5
 # The API sometimes hangs a request without answering; a retry then answers in seconds.
 # A normal first token takes 3-8 s, so give up on a silent request after this long.
-READ_TIMEOUT = 45
+READ_TIMEOUT = 30
 MAX_ATTEMPTS = 3  # every attempt counts against the API's 10 requests/minute
 
 SYSTEM_PROMPT = """You are a maritime transport risk analyst agent. You help shipping, port and \
@@ -93,7 +94,8 @@ def _retry_wait(err):
             return min(float(err.response.headers.get("retry-after", 20)), 60)
         except ValueError:
             return 20
-    if isinstance(err, (openai.APIConnectionError, openai.InternalServerError)):  # incl. timeouts
+    if isinstance(err, (openai.APIConnectionError, openai.InternalServerError,  # incl. timeouts
+                        httpx2.TransportError)):  # connection lost while reading the stream
         return 2
     return None
 
@@ -107,7 +109,7 @@ def _stream_completion(client, kwargs, emit):
         content = []
         try:
             return _read_stream(client, kwargs, emit, content)
-        except openai.APIError as e:
+        except (openai.APIError, httpx2.TransportError) as e:
             wait = _retry_wait(e)
             if content or wait is None or attempt == MAX_ATTEMPTS:
                 raise
@@ -118,25 +120,31 @@ def _stream_completion(client, kwargs, emit):
 
 
 def _read_stream(client, kwargs, emit, content):
-    stream = client.chat.completions.create(**kwargs, stream=True,
-                                            stream_options={"include_usage": True})
+    # Read the server-sent events ourselves: openai's Stream closes the response at
+    # [DONE] before the body is fully read, so the connection can't be reused and
+    # every request pays a new TCP + TLS handshake (~2 s over the VPN).
     calls, usage = {}, None
-    for chunk in stream:
-        if chunk.usage:
-            usage = chunk.usage
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
-        if delta.content:
-            content.append(delta.content)
-            emit({"type": "delta", "text": delta.content})
-        for tc in delta.tool_calls or []:
-            c = calls.setdefault(tc.index, {"id": None, "name": "", "arguments": ""})
-            c["id"] = tc.id or c["id"]
-            if tc.function and tc.function.name:
-                c["name"] += tc.function.name
-            if tc.function and tc.function.arguments:
-                c["arguments"] += tc.function.arguments
+    with client.chat.completions.with_streaming_response.create(
+            **kwargs, stream=True, stream_options={"include_usage": True}) as response:
+        for line in response.iter_lines():  # to the end of the body, so the connection is kept
+            if not line.startswith("data:") or line[5:].strip() == "[DONE]":
+                continue
+            chunk = json.loads(line[5:])
+            if chunk.get("error"):
+                raise openai.APIError(str(chunk["error"]), request=response.http_request, body=chunk)
+            usage = chunk.get("usage") or usage
+            if not chunk.get("choices"):
+                continue
+            delta = chunk["choices"][0].get("delta") or {}
+            if delta.get("content"):
+                content.append(delta["content"])
+                emit({"type": "delta", "text": delta["content"]})
+            for tc in delta.get("tool_calls") or []:
+                c = calls.setdefault(tc["index"], {"id": None, "name": "", "arguments": ""})
+                c["id"] = tc.get("id") or c["id"]
+                fn = tc.get("function") or {}
+                c["name"] += fn.get("name") or ""
+                c["arguments"] += fn.get("arguments") or ""
     return "".join(content), [calls[i] for i in sorted(calls)], usage
 
 
@@ -184,8 +192,8 @@ def run_agent(history, model=MODELS[0], use_tools=True, on_event=None, client=No
         content, tool_calls, u = _stream_completion(client, kwargs, emit)
         usage["llm_calls"] += 1
         if u:
-            usage["prompt_tokens"] += u.prompt_tokens
-            usage["completion_tokens"] += u.completion_tokens
+            usage["prompt_tokens"] += u["prompt_tokens"]
+            usage["completion_tokens"] += u["completion_tokens"]
 
         if not tool_calls:
             ev = {"type": "answer", "step": step, "seconds": round(time.time() - t0, 1)}
