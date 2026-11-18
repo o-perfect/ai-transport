@@ -6,7 +6,7 @@ transport corridors facing geopolitical shocks (TE8315, Topic 5).
 One Streamlit page (`app.py`), natural-language input only:
 
 - **Chat** (right, `app_chat.py`; also `chat_cli.py`): an LLM agent that uses tools (live
-  IMF PortWatch traffic, route + cost comparison, affected-link analysis) to write a risk
+  IMF PortWatch traffic, recent news, route + cost comparison, affected-link analysis) to write a risk
   assessment and contingency plan. Describe the disruption in words, e.g. "Suez is
   closed, options from Shanghai to Rotterdam?".
 - **Map** (left): the routes from the agent's latest `compare_routes` call, with the
@@ -48,7 +48,7 @@ data/ships.json        Ship type definitions
                        apart from core/ports.py, but it is kept as a library)
 
 agent/core.py          Agent loop, system prompt, task understanding, report format
-agent/tools.py         Tools: live PortWatch traffic, route + cost comparison, affected links
+agent/tools.py         Tools: live PortWatch traffic, news, route + cost comparison, affected links
 agent/network.py       Agent routing on searoute: port table, PortWatch -> passage map
 chat_cli.py            Terminal chat for quick testing
 ```
@@ -71,5 +71,7 @@ chat_cli.py            Terminal chat for quick testing
 - LLM API: `https://models.sjtu.edu.cn/api/v1`, models `qwen` (default, fastest),
   `deepseek-chat`, `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 2-4 requests.
 - PortWatch responses are cached for 6 h in `.cache/`.
+- News comes from Google News RSS search (no key): gCaptain for maritime trade press
+  (`site:gcaptain.com`) plus general news. Cached for 30 min in `.cache/`.
 - Agent cost figures (fuel burn, charter rates, canal tolls, war-risk premium) are
   planning assumptions in `agent/tools.py::VESSELS`; cite them as such in the report.

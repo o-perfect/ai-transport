@@ -67,6 +67,9 @@ def render_charts(tools):
             df = pd.DataFrame(r.get("_all_affected", r["affected"]))
             st.markdown(f"**Links through {r['chokepoint']}**: {r['links_affected']} of {r['links_total']}")
             st.dataframe(df, hide_index=True)
+        elif e["name"] == "get_news" and r.get("_items"):
+            st.markdown(f"**News: {r['query']}** (last {r['days']} days)")
+            st.dataframe(pd.DataFrame(r["_items"]), hide_index=True)
 
 
 def latest_geometry(trace):

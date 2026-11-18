@@ -5,14 +5,19 @@ charts but stripped before the result is sent back to the LLM.
 """
 
 import datetime as dt
+import hashlib
 import json
 import pathlib
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 import requests
 
 from . import network as net
 
 PORTWATCH = "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/arcgis/rest/services"
+GOOGLE_NEWS = "https://news.google.com/rss/search"
+MARITIME_SITE = "gcaptain.com"  # maritime trade press, searched through Google News
 CACHE_DIR = pathlib.Path(__file__).resolve().parent.parent / ".cache"
 
 PORTWATCH_CHOKEPOINTS = {
@@ -240,6 +245,34 @@ def find_affected_routes(chokepoint, vessel_type="container_large", speed_knots=
             "_all_affected": rows}
 
 
+def _news_search(q):
+    """Google News RSS search, newest first. Cached for 30 min."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    key = CACHE_DIR / f"news_{hashlib.md5(q.encode()).hexdigest()}.xml"
+    if not key.exists() or dt.datetime.now().timestamp() - key.stat().st_mtime > 1800:
+        r = requests.get(GOOGLE_NEWS, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        r.raise_for_status()
+        key.write_bytes(r.content)
+    items = []
+    for it in ET.fromstring(key.read_bytes()).iter("item"):
+        source = it.findtext("source", "")
+        title = it.findtext("title", "").removesuffix(f" - {source}")
+        if not title.endswith("Archives"):  # site listing pages, not articles
+            items.append({"date": f"{parsedate_to_datetime(it.findtext('pubDate')):%Y-%m-%d}",
+                          "source": source, "title": title})
+    return sorted(items, key=lambda i: i["date"], reverse=True)
+
+
+def get_news(query, days=7):
+    """Recent headlines for a query from maritime trade press (gCaptain) and general news."""
+    days = max(1, min(int(days), 30))
+    maritime = _news_search(f"{query} site:{MARITIME_SITE} when:{days}d")
+    general = [i for i in _news_search(f"{query} when:{days}d") if i["source"] != "gCaptain"]
+    return {"query": query, "days": days, "maritime": maritime[:6], "general": general[:8],
+            "_items": maritime + general}
+
+
 # --- OpenAI-style tool schemas ----------------------------------------------
 
 _port_param = {"type": "string",
@@ -287,10 +320,21 @@ SCHEMAS = [
             "vessel_type": {"type": "string", "enum": list(VESSELS), "default": "container_large"},
             "speed_knots": {"type": "number", "default": 14},
         }, "required": ["chokepoint"]}}},
+    {"type": "function", "function": {
+        "name": "get_news",
+        "description": "Recent news headlines (date, outlet, title) from maritime trade press (gCaptain) and "
+                       "general news (Google News). Use to learn what is happening now: closures, attacks, "
+                       "war-risk insurance, fuel prices, port strikes or congestion.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Search terms, e.g. 'Red Sea shipping attacks', "
+                                                      "'Suez Canal', 'bunker fuel prices'"},
+            "days": {"type": "integer", "description": "How many days back (1-30)", "default": 7},
+        }, "required": ["query"]}}},
 ]
 
 FUNCTIONS = {
     "get_chokepoint_traffic": get_chokepoint_traffic,
     "compare_routes": compare_routes,
     "find_affected_routes": find_affected_routes,
+    "get_news": get_news,
 }
