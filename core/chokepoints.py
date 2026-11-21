@@ -42,6 +42,11 @@ class Chokepoint:
     max_beam_m: float | None = None
     max_length_m: float | None = None
     note: str = ""
+    # Custom chokepoints only: a line across the strait, [[lat, lon], ...], each
+    # end on land. Closing blocks only network edges that cross it, so ports on
+    # either side stay reachable. Without a gate, every edge within radius_km
+    # of (lat, lon) is blocked, which also cuts off any port inside that circle.
+    gate: list | None = None
 
     @property
     def is_open(self) -> bool:
