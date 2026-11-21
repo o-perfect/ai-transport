@@ -51,8 +51,10 @@ PASSAGES = {name: passage for name, (passage, _) in net.CHOKEPOINTS.items()}
 
 def _portwatch_query(layer, params):
     CACHE_DIR.mkdir(exist_ok=True)
-    key = CACHE_DIR / (f"{layer}_" + "_".join(f"{k}-{v}" for k, v in sorted(params.items()))
-                       .replace(" ", "").replace("'", "").replace("/", "")[:180] + ".json")
+    # Hash the query: its text contains characters Windows forbids in filenames
+    # (the "<=" / ">=" of the date filter), and truncating it could collide.
+    digest = hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()
+    key = CACHE_DIR / f"{layer}_{digest}.json"
     if key.exists() and dt.datetime.now().timestamp() - key.stat().st_mtime < 6 * 3600:
         return json.loads(key.read_text())
     r = SESSION.get(f"{PORTWATCH}/{layer}/FeatureServer/0/query",
