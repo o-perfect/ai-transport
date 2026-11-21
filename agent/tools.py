@@ -14,6 +14,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
+import strait_risk
 from core import costs
 
 from . import network as net
@@ -28,19 +29,7 @@ CACHE_DIR = pathlib.Path(__file__).resolve().parent.parent / ".cache"
 SESSION = requests.Session()
 SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_maxsize=16))
 
-PORTWATCH_CHOKEPOINTS = {
-    "Suez Canal": "chokepoint1", "Panama Canal": "chokepoint2", "Bosporus Strait": "chokepoint3",
-    "Bab el-Mandeb Strait": "chokepoint4", "Malacca Strait": "chokepoint5",
-    "Strait of Hormuz": "chokepoint6", "Cape of Good Hope": "chokepoint7",
-    "Gibraltar Strait": "chokepoint8", "Dover Strait": "chokepoint9", "Oresund Strait": "chokepoint10",
-    "Taiwan Strait": "chokepoint11", "Korea Strait": "chokepoint12", "Tsugaru Strait": "chokepoint13",
-    "Luzon Strait": "chokepoint14", "Lombok Strait": "chokepoint15", "Ombai Strait": "chokepoint16",
-    "Bohai Strait": "chokepoint17", "Torres Strait": "chokepoint18", "Sunda Strait": "chokepoint19",
-    "Makassar Strait": "chokepoint20", "Magellan Strait": "chokepoint21",
-    "Yucatan Channel": "chokepoint22", "Windward Passage": "chokepoint23",
-    "Mona Passage": "chokepoint24", "Balabac Strait": "chokepoint25", "Bering Strait": "chokepoint26",
-    "Mindoro Strait": "chokepoint27", "Kerch Strait": "chokepoint28",
-}
+PORTWATCH_CHOKEPOINTS = strait_risk.CHOKEPOINTS  # name -> PortWatch portid
 
 # Ship types and all cost figures live in core/costs.py (data/ships.json,
 # data/cost_assumptions.json); the tools below never compute a cost themselves.
@@ -121,6 +110,35 @@ def get_chokepoint_traffic(chokepoint, days=30):
         "source": "IMF PortWatch Daily_Chokepoints_Data",
         "_series": {"date": [r["date"] for r in recent], "n_total": [r["n_total"] for r in recent],
                     "year_ago_n_total": [r["n_total"] for r in last_year]},
+    }
+
+
+RISK_MAX_CHOKEPOINTS = 6
+
+
+def assess_chokepoint_risk(chokepoints):
+    """Data-based risk state (Normal / Reduced / Closed) of one or more chokepoints
+    from the strait_risk HMM, with probabilities, risk index, outlook and why."""
+    if isinstance(chokepoints, str):
+        chokepoints = [chokepoints]
+    # Resolve first, then de-duplicate: "red sea" and "Bab el-Mandeb" are one strait.
+    names = list(dict.fromkeys(strait_risk.resolve(c) or net.resolve(c) or c
+                               for c in chokepoints))[:RISK_MAX_CHOKEPOINTS]
+    results = strait_risk.assess_many(names)
+    out, series = [], {}
+    for n in names:
+        r = results[n]
+        if "error" not in r:
+            series[r["chokepoint"]] = r.pop("_series", None)
+            r.pop("source", None), r.pop("notes", None)  # shared, given once below
+        out.append(r)
+    if all("error" in r for r in out):
+        return {"error": "; ".join(r["error"] for r in out)}
+    return {
+        "assessments": out,
+        "method_notes": strait_risk.api.METHOD_NOTES,
+        "source": strait_risk.api.SOURCE,
+        "_series": series,
     }
 
 
@@ -300,6 +318,18 @@ SCHEMAS = [
             "days": {"type": "integer", "description": "Window length in days (7-365)", "default": 30},
         }, "required": ["chokepoint"]}}},
     {"type": "function", "function": {
+        "name": "assess_chokepoint_risk",
+        "description": "Data-based risk state of chokepoints from a statistical model (hidden Markov model) fitted "
+                       "on IMF PortWatch transits since 2019. For each chokepoint: state Normal / Reduced "
+                       "(selective avoidance, ~60% of normal traffic) / Closed (~6%, all ship types gone), state "
+                       "probabilities, a 0-100 risk index, weeks in the current state, the chance it persists 4/8/13 "
+                       "weeks ahead, transits vs normal for the season, and why (evidence terms). Weekly data: it "
+                       "lags events by 1-2 weeks, so compare with recent news. Pass several chokepoints in one call.",
+        "parameters": {"type": "object", "properties": {
+            "chokepoints": {"type": "array", "items": {"type": "string", "enum": list(PORTWATCH_CHOKEPOINTS)},
+                            "description": f"Up to {RISK_MAX_CHOKEPOINTS} chokepoints"},
+        }, "required": ["chokepoints"]}}},
+    {"type": "function", "function": {
         "name": "compare_routes",
         "description": "Compute the normal (baseline) sea route between two ports and up to 3 alternative routes "
                        "when chokepoints are blocked. Returns distance, sea days, canal waiting days, voyage cost "
@@ -346,6 +376,7 @@ SCHEMAS = [
 
 FUNCTIONS = {
     "get_chokepoint_traffic": get_chokepoint_traffic,
+    "assess_chokepoint_risk": assess_chokepoint_risk,
     "compare_routes": compare_routes,
     "find_affected_routes": find_affected_routes,
     "get_news": get_news,

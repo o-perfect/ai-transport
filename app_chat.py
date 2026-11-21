@@ -53,6 +53,16 @@ def render_charts(tools):
                 df["same days, year before"] = ya
             st.markdown(f"**{r['chokepoint']}: daily transits** ({r['window']})")
             st.line_chart(df.set_index("date"))
+        elif e["name"] == "assess_chokepoint_risk" and r.get("_series"):
+            for a in r.get("assessments", []):
+                s = r["_series"].get(a.get("chokepoint"))
+                if not s:
+                    continue
+                st.markdown(f"**{a['chokepoint']}: {a['state']}** (risk {a['risk_index']}/100, "
+                            f"{a['weeks_in_state']} wk in state) · weekly transits/day vs normal")
+                df = pd.DataFrame({"week": pd.to_datetime(s["week"]), "transits/day": s["total_per_day"],
+                                   "normal for the season": s["expected_per_day"]})
+                st.line_chart(df.set_index("week"))
         elif e["name"] == "compare_routes" and isinstance(r.get("alternatives"), list):
             rows = [("Baseline: " + " / ".join(r["baseline_route"]["chokepoints"]), r["baseline_route"])]
             rows += [("Alt: " + " / ".join(a["chokepoints"]), a) for a in r["alternatives"]]
