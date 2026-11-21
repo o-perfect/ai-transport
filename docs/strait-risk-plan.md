@@ -13,7 +13,7 @@ Traffic reacts after events. Early warning from news is Stage 4, out of scope he
 
 | # | Assumption | Why it is plausible | How we check it |
 |---|---|---|---|
-| A1 | **Ship types decide differently.** Container lines reroute as whole fleets (liner schedules, alliance decisions, high cargo value). Tankers and bulkers decide ship by ship on the spot market. | Industry structure; Red Sea 2023–24, where container transits fell far more than tanker transits. | The fitted Stressed state should show a large container–tanker gap. Onset dates per type (Stage 3/PELT) should differ. If the gap never moves, the model falls back to level only and still works. |
+| A1 | **Ship types decide differently.** Container lines reroute as whole fleets (liner schedules, alliance decisions, high cargo value). Tankers and bulkers decide ship by ship on the spot market. | Industry structure; Red Sea 2023–24, where container transits fell far more than tanker transits. In a true closure the difference disappears: at Hormuz since Mar 2026, containers and tankers are both down ~98%. | The fitted Stressed state should show a large container–tanker gap, and a full closure (Hormuz 2026) a gap near 0. Onset dates per type (Stage 3/PELT) should differ. If the gap never moves, the model falls back to level only and still works. |
 | A2 | A calm-period baseline represents "normal" traffic for each strait. | Seasonality and weekday patterns are stable year to year. | Residuals in calm years should be centred on 0 with no seasonal shape left. |
 | A3 | Regimes are **persistent** and switch as a Markov chain. | Rerouting decisions are sticky: contracts, insurance, schedules. | Fitted diagonal of A close to 1. Regime lengths in the backtest look roughly geometric. |
 | A4 | After per-strait standardisation, **all straits share the same three states**. | Features are unitless anomalies, so "−2σ containers" means the same thing everywhere. | Leave-one-strait-out test (section 2.6). |
@@ -88,7 +88,11 @@ Simple, explainable, and the benchmark the HMM has to beat.
 ### 1.7 Stage 1 checks
 - Plot observed vs expected for each strait, with events shaded.
 - Calm-period residuals: mean ≈ 0, no leftover seasonality (autocorrelation at lag 52 weeks small).
-- Red Sea 2023–24: `D` crosses 0.40 at Bab el-Mandeb and Suez, `f_gap` clearly positive.
+- Red Sea 2023–24: `D` crosses 0.40 at Bab el-Mandeb and Suez, `f_gap` clearly positive
+  (selective avoidance).
+- Hormuz from Mar 2026: `D` above 0.9 and `f_gap` near 0 (everyone stopped). Daily counts are
+  0–5, so check that the +0.5 in the log keeps the anomalies finite and that `f_vol`'s
+  counting-noise correction stops tiny counts from showing up as volatility.
 
 **Stage 1 output:** table `strait, week, f_level, f_gap, f_size, f_vol, D, rule_state`.
 
@@ -111,6 +115,8 @@ model.fit(X, lengths)
 - Baum–Welch (EM). Run 20 random restarts and keep the best log-likelihood.
 - **Seed the means** from Stage 1 so the states mean what we intend:
   Normal μ ≈ [0, 0, 0, 0], Stressed ≈ [−1.5, +1.5, 0, +1], Disrupted ≈ [−4, +1, ?, 0] (z units).
+  The Disrupted gap is a compromise: about +2 for the Red Sea (tankers stayed) but about 0 for
+  Hormuz 2026 (all types stopped). See the K = 4 test in 2.4.
 - **Sticky prior:** `transmat_prior` (Dirichlet) with extra weight on the diagonal, because
   only a few switches exist in the data and the off-diagonal terms are otherwise unstable.
 - If seeding is not enough, fix the Normal mean at 0 (`init_params`/`params` without `"m"`
@@ -122,7 +128,9 @@ Check that the middle state has the largest `f_gap` (assumption A1). If it does 
 
 ### 2.4 Model selection
 Compare on BIC and on the backtest (section 2.6):
-- K = 2, 3, 4
+- K = 2, 3, 4. With two very different disrupted episodes in the data, K = 4 may split Disrupted
+  into **Avoided** (Red Sea: level down, gap high) and **Closed** (Hormuz 2026: level near zero,
+  gap ≈ 0). Accept the split only if BIC prefers it, not because it matches the story.
 - full vs diagonal covariance
 - with vs without `f_vol`, with vs without `f_size`
 - trend vs no trend in the Stage 1 baseline
@@ -137,14 +145,26 @@ Compare on BIC and on the backtest (section 2.6):
 - Caveat to state: geometric durations are memoryless.
 
 ### 2.6 Validation
-Episodes (from `events.yaml`):
+The model is fitted **without labels**. Episodes (from `events.yaml`) are used only afterwards,
+to compare the model's states with real history:
 
-| Episode | Strait | Kind | What should happen |
-|---|---|---|---|
-| Ever Given, Mar 2021 | Suez | 1-week accident | Stays Normal or brief Stressed, **no** Disrupted |
-| Drought draft limits, 2023–24 | Panama | Physical, gradual | Stressed, driven by `f_size` rather than `f_gap` |
-| Houthi attacks, Nov 2023 → | Bab el-Mandeb, Suez | Geopolitical, long | Stressed → Disrupted within weeks, persistent |
-| Israel–Iran war, Jun 2025 | Hormuz | Tension, small effect | Stressed at most |
+| Episode | Strait | Kind | What PortWatch shows | What should happen |
+|---|---|---|---|---|
+| Ever Given, Mar 2021 | Suez | 1-week accident | Short, sharp dip | Stays Normal or brief Stressed, **no** Disrupted |
+| Drought draft limits, 2023–24 | Panama | Physical, gradual | Fewer and lighter-loaded ships | Stressed, driven by `f_size` rather than `f_gap` |
+| Houthi attacks, Nov 2023 → | Bab el-Mandeb, Suez | Geopolitical, selective avoidance | ~65% below 2023, containers hit hardest; a further ~25% drop from Aug 2026 | Stressed → Disrupted within weeks, persistent; gap clearly positive |
+| Israel–Iran war, Jun 2025 | Hormuz | Tension, no traffic effect | ~102/day in Apr–Jun 2025, no dip | Stays **Normal** (tests over-reaction) |
+| Winter dip, Nov 2025 – Jan 2026 | Hormuz | Unclear | 55–67/day vs ~90–100 earlier in 2025; Dec 2024 was also low (~71) | Open question: seasonal, AIS/GPS jamming, or a lead-up to closure. Compare with the same months a year earlier before calling it Stressed |
+| **Closure, Mar 2026 →** | **Hormuz** | **Near-total closure** | **~3/day vs ~86 a year earlier (−96%); containers and tankers both −98%** | **Disrupted (or Closed if K = 4) within 1–2 weeks, persistent; gap ≈ 0.** The main closure test case |
+
+Notes on Hormuz 2026:
+- PortWatch counts AIS-tracked **transits**. Ship-to-ship transfers at anchorages outside the strait
+  are not counted, and ships sailing dark (AIS off) are missed, so true traffic may be somewhat above
+  the recorded ~3/day. The model sees recorded traffic either way.
+- The episode is still running, so it also tests the duration output: the expected remaining
+  duration from 1/(1 − A_kk) should be reported with its geometric-duration caveat.
+- It is the strongest test of A1: the Red Sea should look like selective avoidance (gap high) and
+  Hormuz 2026 like a full stop (gap ≈ 0).
 
 Metrics:
 - **Detection lag:** weeks from the episode start to the first week with P(Disrupted or Stressed) > 0.5.
@@ -195,4 +215,7 @@ notebooks/strait_risk.ipynb   # figures for the report
 - Long-running disruptions (Bab el-Mandeb since late 2023) make the baseline depend on extrapolation from years ago.
 - Hormuz has few containers, so `f_level`/`f_gap` are noisy there. z-scoring helps but does not fix it.
   If needed, use a tanker-based level for tanker-dominated straits.
+- Hormuz since Mar 2026 has 0–5 transits a day. Its z-scores will be extreme (far outside anything
+  in the calm window), which can pull a Gaussian state towards that one strait. Check whether the
+  fitted Disrupted state is dominated by Hormuz weeks; if so, clip features (e.g. at −6σ) before fitting.
 - AIS spoofing and dark transits, especially in the Gulf.
