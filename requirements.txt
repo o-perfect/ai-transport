@@ -6,3 +6,4 @@ pandas>=3.1
 openai>=3.48
 python-dotenv>=1.2
 requests>=2.34
+faster-whisper>=1.2         # voice input (local Whisper speech-to-text); optional

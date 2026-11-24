@@ -75,6 +75,10 @@ chat_cli.py            Terminal chat for quick testing
 - LLM API: `https://models.sjtu.edu.cn/api/v1`, models `qwen` (default, fastest),
   `deepseek-chat`, `deepseek-reasoner`. Limit 10 requests/min; one agent turn uses about 3-5 requests (capped at 5).
 - PortWatch responses are cached for 6 h in `.cache/`.
+- Voice input: the mic button in the chat records in the browser; `ui/speech.py` transcribes it
+  locally with Whisper (`faster-whisper`, model "small", ~460 MB, downloaded from Hugging Face on
+  first start, then offline). Browsers only allow the mic on `localhost` or HTTPS. Without
+  `faster-whisper` installed the mic button is simply hidden.
 - News comes from Google News RSS search (no key): gCaptain for maritime trade press
   (`site:gcaptain.com`) plus general news. Cached for 30 min in `.cache/`.
 - Cost figures are planning assumptions in `data/ships.json` and
