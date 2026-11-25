@@ -13,7 +13,8 @@
     "max_draft_m": 20.1,
     "max_beam_m": 77.5,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "babalmandab",
@@ -29,7 +30,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "hormuz",
@@ -45,7 +47,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "malacca",
@@ -61,7 +64,8 @@
     "max_draft_m": 25.0,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "sunda",
@@ -77,7 +81,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "panama",
@@ -93,7 +98,8 @@
     "max_draft_m": 15.2,
     "max_beam_m": 51.25,
     "max_length_m": 366,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "gibraltar",
@@ -109,7 +115,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "bosporus",
@@ -125,7 +132,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "cape",
@@ -141,7 +149,8 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": ""
+    "note": "",
+    "gate": null
   },
   {
     "id": "taiwan",
@@ -157,6 +166,16 @@
     "max_draft_m": null,
     "max_beam_m": null,
     "max_length_m": null,
-    "note": "Custom chokepoint (geometry-based, not built into searoute)"
+    "note": "Custom chokepoint (geometry-based, not built into searoute). Gate: Pingtan Island to the Hsinchu coast.",
+    "gate": [
+      [
+        25.55,
+        119.75
+      ],
+      [
+        24.85,
+        121.0
+      ]
+    ]
   }
 ]

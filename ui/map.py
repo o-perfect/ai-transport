@@ -20,8 +20,11 @@ PIN_SVG = ('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="
            '<circle cx="12" cy="11" r="1.6" fill="#22D3EE" stroke="none"/></svg>')
 
 
-def _latlon(feature):
-    return [(lat, lon) for lon, lat in feature["geometry"]["coordinates"]]
+WORLD_SHIFTS = (-360, 0, 360)  # draw on every world copy so panning across the dateline is seamless
+
+
+def _latlon(feature, shift=0):
+    return [(lat, lon + shift) for lon, lat in feature["geometry"]["coordinates"]]
 
 
 def _route_tooltip(i, p):
@@ -34,22 +37,27 @@ def _route_tooltip(i, p):
 def _draw_routes(m, features, rec):
     # baseline at the bottom, then the alternatives, the recommended one on top
     order = sorted(range(len(features)), key=lambda i: (i == rec, features[i]["properties"]["role"] != "baseline"))
-    for i in order:
-        p, pts, color = features[i]["properties"], _latlon(features[i]), ui.route_color(i, features[i]["properties"])
-        if p["role"] == "baseline":
-            folium.PolyLine(pts, color=color, weight=2, opacity=0.85, dash_array="6 7",
-                            tooltip=_route_tooltip(i, p)).add_to(m)
-            if i == rec:  # undisrupted: the normal route is the best one, give it the flow
-                AntPath(pts, color=color, pulse_color="#E6EDF7", weight=2, opacity=0.6,
-                        delay=1800, dash_array=[8, 26]).add_to(m)
-            continue
-        folium.PolyLine(pts, color=color, weight=10, opacity=0.14,  # soft glow under the line
+    for shift in WORLD_SHIFTS:
+        for i in order:
+            _draw_route(m, i, features[i], rec, shift)
+
+
+def _draw_route(m, i, feature, rec, shift):
+    p, pts, color = feature["properties"], _latlon(feature, shift), ui.route_color(i, feature["properties"])
+    if p["role"] == "baseline":
+        folium.PolyLine(pts, color=color, weight=2, opacity=0.85, dash_array="6 7",
                         tooltip=_route_tooltip(i, p)).add_to(m)
-        if i == rec:
-            AntPath(pts, color=color, pulse_color="#E6FBFF", weight=3, opacity=0.95,
-                    delay=1800, dash_array=[8, 26], tooltip=_route_tooltip(i, p)).add_to(m)
-        else:
-            folium.PolyLine(pts, color=color, weight=2.5, opacity=0.95, tooltip=_route_tooltip(i, p)).add_to(m)
+        if i == rec:  # undisrupted: the normal route is the best one, give it the flow
+            AntPath(pts, color=color, pulse_color="#E6EDF7", weight=2, opacity=0.6,
+                    delay=1800, dash_array=[8, 26]).add_to(m)
+        return
+    folium.PolyLine(pts, color=color, weight=10, opacity=0.14,  # soft glow under the line
+                    tooltip=_route_tooltip(i, p)).add_to(m)
+    if i == rec:
+        AntPath(pts, color=color, pulse_color="#E6FBFF", weight=3, opacity=0.95,
+                delay=1800, dash_array=[8, 26], tooltip=_route_tooltip(i, p)).add_to(m)
+    else:
+        folium.PolyLine(pts, color=color, weight=2.5, opacity=0.95, tooltip=_route_tooltip(i, p)).add_to(m)
 
 
 def _draw_chokepoints(m, features, scenario):
@@ -64,7 +72,7 @@ def _draw_chokepoints(m, features, scenario):
                f'<div class="status" style="color:{color}">{label}</div>'
                f'<div class="cp-row">Compared routes through here: <b>{", ".join(on) or "none"}</b></div>'
                f'<div class="cp-row mono">{lat:.2f}°, {lon:.2f}°</div></div>')
-        for shift in (-360, 0, 360):  # draw on every world copy
+        for shift in WORLD_SHIFTS:
             folium.Marker([lat, lon + shift],
                           icon=folium.DivIcon(html=icon_html, icon_size=(22, 22), icon_anchor=(11, 11),
                                               class_name="cp-icon"),
@@ -77,11 +85,12 @@ def _draw_ports(m, features):
     (lon0, lat0), (lon1, lat1) = base["geometry"]["coordinates"][0], base["geometry"]["coordinates"][-1]
     for (lat, lon), cls, name in (((lat0, lon0), "origin", base["properties"]["origin"]),
                                   ((lat1, lon1), "destination", base["properties"]["destination"])):
-        folium.Marker([lat, lon],
-                      icon=folium.DivIcon(html=f'<div class="pt {cls}"></div>', icon_size=(14, 14),
-                                          icon_anchor=(7, 7), class_name="pt-icon"),
-                      tooltip=folium.Tooltip(html.escape(name), permanent=True, direction="right",
-                                             offset=(10, 0), class_name="port-label")).add_to(m)
+        for shift in WORLD_SHIFTS:
+            folium.Marker([lat, lon + shift],
+                          icon=folium.DivIcon(html=f'<div class="pt {cls}"></div>', icon_size=(14, 14),
+                                              icon_anchor=(7, 7), class_name="pt-icon"),
+                          tooltip=folium.Tooltip(html.escape(name), permanent=True, direction="right",
+                                                 offset=(10, 0), class_name="port-label")).add_to(m)
 
 
 def _legend(features, rec):
@@ -115,7 +124,7 @@ def route_map(routes: dict) -> folium.Map:
     rec = ui.recommended_index(features, scenario) if features else None
 
     m = folium.Map(location=[22, 40], zoom_start=2, min_zoom=2, tiles=None,
-                   world_copy_jump=True, control_scale=True)
+                   world_copy_jump=True, control_scale=True, prefer_canvas=True)
     # Esri Dark Gray: free and keyless (CARTO's Dark Matter now needs an API key)
     folium.TileLayer(ESRI_DARK, attr="Tiles &copy; Esri", name="Dark gray (Esri)", max_zoom=16).add_to(m)
     folium.TileLayer(ESRI_LIGHT, attr="Tiles &copy; Esri", name="Light gray (Esri)", max_zoom=16,
