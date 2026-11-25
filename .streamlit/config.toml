@@ -1,9 +1,28 @@
 [theme]
-base = "light"
-primaryColor = "#1a73e8"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f4f6f9"
-textColor = "#202124"
+# "Maritime control room": deep navy ground, lighter surface cards, one cyan accent.
+# Page-level details (cards, chat bubbles, chips) live in ui/styles.css.
+base = "dark"
+primaryColor = "#22D3EE"
+backgroundColor = "#0B1220"
+secondaryBackgroundColor = "#111A2E"
+textColor = "#E6EDF7"
+borderColor = "rgba(255, 255, 255, 0.08)"
+showWidgetBorder = true
+linkColor = "#67E8F9"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap, monospace"
+codeBackgroundColor = "#0E1729"
+baseRadius = "12px"
+buttonRadius = "10px"
+redColor = "#EF4444"
+orangeColor = "#F59E0B"
+greenColor = "#22C55E"
+blueColor = "#22D3EE"
+dataframeHeaderBackgroundColor = "#16213A"
+chartCategoricalColors = ["#22D3EE", "#A78BFA", "#F472B6", "#F59E0B", "#4ADE80", "#94A3B8"]
+
+[client]
+toolbarMode = "minimal"
 
 [server]
 headless = true
